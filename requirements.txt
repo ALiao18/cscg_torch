@@ -1,0 +1,20 @@
+# === Core Scientific Libraries ===
+numpy>=1.24
+scipy>=1.10
+matplotlib>=3.7
+numba>=0.57
+tqdm>=4.65
+
+# === ML / Torch ===
+torch>=2.1.0
+
+# === Jupyter Ecosystem ===
+jupyter>=1.0
+jupytext>=1.15
+
+# === Optional: For YAML Configs ===
+PyYAML>=6.0
+
+# === Logging & Experiment Tools (Optional, uncomment if needed) ===
+#rich>=13.0
+#tensorboard>=2.14
