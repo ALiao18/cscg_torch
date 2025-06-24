@@ -28,12 +28,21 @@ class CSCGEnvironmentAdapter:
         self.reset()
         for _ in range(length):
             obs = self.get_observation()
+            
+            # Ensure n_actions is Python int
+            assert isinstance(self.n_actions, int), f"n_actions must be int, got {type(self.n_actions)}"
             action = self.rng.choice(self.n_actions)
+            
+            # Debug: check types before conversion
+            assert isinstance(action, (int, np.integer)), f"action must be int, got {type(action)}: {action}"
+            assert isinstance(obs, int), f"obs must be int, got {type(obs)}: {obs}"
+            
             new_obs, valid = self.step(action)
             if valid:
-                # Ensure obs and action are Python integers
+                # Convert to Python integers (safe now)
                 x_seq.append(int(obs))
                 a_seq.append(int(action))
+        
         # Return PyTorch tensors on the correct device (GPU-compatible)
         x_tensor = torch.tensor(x_seq, dtype=torch.int64, device=self.device)
         a_tensor = torch.tensor(a_seq, dtype=torch.int64, device=self.device)
@@ -61,12 +70,16 @@ class RoomTorchAdapter(CSCGEnvironmentAdapter):
         if self.start_pos is None:
             free_positions = (self.room != -1).nonzero(as_tuple=False)
             if len(free_positions) > 0:
-                idx = self.rng.choice(len(free_positions))
-                self.pos = tuple(free_positions[idx].tolist())
+                # Ensure we use Python int for choice
+                num_positions = int(len(free_positions))
+                idx = self.rng.choice(num_positions)
+                # Convert tensor indices to Python ints
+                selected_pos = free_positions[idx].tolist()
+                self.pos = tuple(int(x) for x in selected_pos)
             else:
                 self.pos = (1, 1)  # fallback
         else:
-            self.pos = tuple(self.start_pos)
+            self.pos = tuple(int(x) for x in self.start_pos)
         return self.get_observation()
     
     def step(self, action):
@@ -96,12 +109,20 @@ class RoomTorchAdapter(CSCGEnvironmentAdapter):
     
     def get_observation(self):
         r, c = self.pos
-        up = int(self.room[r - 1, c] != -1) if r > 0 else 0
-        down = int(self.room[r + 1, c] != -1) if r < self.h - 1 else 0
-        left = int(self.room[r, c - 1] != -1) if c > 0 else 0
-        right = int(self.room[r, c + 1] != -1) if c < self.w - 1 else 0
+        # Ensure r, c are Python ints
+        r, c = int(r), int(c)
+        
+        # Convert tensor comparisons to Python ints explicitly
+        up = int((self.room[r - 1, c] != -1).item()) if r > 0 else 0
+        down = int((self.room[r + 1, c] != -1).item()) if r < self.h - 1 else 0
+        left = int((self.room[r, c - 1] != -1).item()) if c > 0 else 0
+        right = int((self.room[r, c + 1] != -1).item()) if c < self.w - 1 else 0
+        
         obs = (up << 3) + (down << 2) + (left << 1) + right
-        return obs  # Returns Python int, not tensor
+        
+        # Final safety check
+        assert isinstance(obs, int), f"obs must be Python int, got {type(obs)}: {obs}"
+        return obs
 
 # Import CHMM model
 try:
