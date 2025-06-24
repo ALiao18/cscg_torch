@@ -50,7 +50,7 @@ class RoomNPAdapter(CSCGEnvironmentAdapter):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.action_map = ACTIONS
-        self.n_actions = 4
+        self.n_actions = int(4)
         
         # Post-initialization validation
         assert isinstance(self.n_actions, int), f"n_actions must be int, got {type(self.n_actions)}"
