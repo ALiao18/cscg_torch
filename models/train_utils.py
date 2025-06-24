@@ -31,8 +31,13 @@ def forward(T_tr, Pi, n_clones, x, a, device, store_messages = False):
     a: action sequence
     store_messages: whether to store messages
     """
+    # Ensure all tensors are on the correct device
+    x, a = x.to(device), a.to(device)
+    Pi, n_clones = Pi.to(device), n_clones.to(device)
+    T_tr = T_tr.to(device)
+    
     # compute state and message locations
-    state_loc = torch.hstack((torch.tensor([0], dtype = n_clones.dtype), n_clones)).cumsum()
+    state_loc = torch.cat([torch.tensor([0], dtype=n_clones.dtype, device=device), n_clones]).cumsum(0)
     T_len = T_tr.shape[1]
     log2_lik = torch.zeros(len(x), dtype = T_tr.dtype, device = device)
     
@@ -47,9 +52,10 @@ def forward(T_tr, Pi, n_clones, x, a, device, store_messages = False):
     log2_lik[0] = torch.log2(p_obs)
     
     if store_messages:
-        mess_loc = torch.hstack(
-            (torch.tensor([0], dtype = n_clones.dtype), n_clones[x])
-        ).cumsum()
+        mess_loc = torch.cat([
+            torch.tensor([0], dtype=n_clones.dtype, device=device), 
+            n_clones[x]
+        ]).cumsum(0)
         mess_fwd = torch.empty(mess_loc[-1], dtype = T_tr.dtype, device = device)
         t_start, t_stop = mess_loc[t : t + 2]
         mess_fwd[t_start:t_stop] = message
@@ -182,15 +188,9 @@ def forward_mp(T_tr, Pi, n_clones, x, a, device, store_messages=False):
         i_start, i_stop = state_loc[i], state_loc[i + 1]
         j_start, j_stop = state_loc[j], state_loc[j + 1]
 
-        # Allocate new message
-        num_j_clones = j_stop - j_start
-        new_message = torch.zeros(num_j_clones, dtype=dtype, device=device)
-
-        for d in range(num_j_clones):
-            trans_probs = T_tr[aij, j_start + d, i_start:i_stop]
-            new_message[d] = (trans_probs * message).max()
-
-        message = new_message
+        # Vectorized transition computation (GPU-optimized)
+        T_slice = T_tr[aij, j_start:j_stop, i_start:i_stop]  # [num_j_clones, num_i_clones]
+        message = (T_slice * message.unsqueeze(0)).max(dim=1).values
         p_obs = message.max()
         assert p_obs > 0, f"Zero probability at t={t}"
         message /= p_obs
@@ -367,7 +367,7 @@ def backward(T, n_clones, x, a, device):
     i = x[t]
     message = torch.ones(n_clones[i], dtype = dtype, device = device) / n_clones[i]
 
-    mess_bwd = torch.empty(mess_loc[-1], dtype)
+    mess_bwd = torch.empty(mess_loc[-1], dtype=dtype, device=device)
     t_start, t_stop = mess_loc[t : t + 2]
     mess_bwd[t_start : t_stop] = message
 

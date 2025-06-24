@@ -282,13 +282,20 @@ class CHMM_torch(object):
             )
             states = backtrace(self.T, self.n_clones, x, a, mess_fwd, self.device)
 
-            # === Accumulate hard counts ===
+            # === Accumulate hard counts (GPU-optimized) ===
             self.C.zero_()
             with torch.no_grad():
-                for t in range(1, len(x)):
-                    aij = a[t - 1]
-                    i, j = states[t - 1], states[t]
-                    self.C[aij, i, j] += 1.0
+                # Vectorized count accumulation
+                if len(x) > 1:
+                    t_indices = torch.arange(1, len(x), device=self.device)
+                    a_indices = a[:-1]  # actions from t-1
+                    i_indices = states[:-1]  # from states
+                    j_indices = states[1:]  # to states
+                    
+                    # Use advanced indexing for parallel updates
+                    self.C.index_put_((a_indices, i_indices, j_indices), 
+                                     torch.ones_like(a_indices, dtype=self.dtype), 
+                                     accumulate=True)
 
             # === M-step: Normalize counts into transition probabilities ===
             self.update_T()
