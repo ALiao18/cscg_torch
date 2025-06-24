@@ -24,7 +24,39 @@ def setup_colab_imports():
     try:
         from cscg_torch.env_adapters.base_adapter import CSCGEnvironmentAdapter
     except ImportError:
-        from env_adapters.base_adapter import CSCGEnvironmentAdapter
+        try:
+            from env_adapters.base_adapter import CSCGEnvironmentAdapter
+        except ImportError:
+            # Define base adapter inline as fallback
+            import numpy as np
+            import torch
+            
+            class CSCGEnvironmentAdapter:
+                def __init__(self, seed=42):
+                    self.rng = np.random.RandomState(seed)
+                    self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                    self.n_actions = None
+                
+                def reset(self):
+                    raise NotImplementedError
+                
+                def step(self, action):
+                    raise NotImplementedError
+                
+                def get_observation(self):
+                    raise NotImplementedError
+                
+                def generate_sequence(self, length):
+                    x_seq, a_seq = [], []
+                    self.reset()
+                    for _ in range(length):
+                        obs = self.get_observation()
+                        action = self.rng.choice(self.n_actions)
+                        new_obs, valid = self.step(action)
+                        if valid:
+                            x_seq.append(obs)
+                            a_seq.append(action)
+                    return np.array(x_seq), np.array(a_seq)
     
     # Define RoomTorchAdapter directly to avoid import issues
     class RoomTorchAdapter(CSCGEnvironmentAdapter):
@@ -32,7 +64,10 @@ def setup_colab_imports():
         
         def __init__(self, room_tensor, no_up=[], no_down=[], no_left=[], no_right=[], start_pos=None, seed=42):
             super().__init__(seed=seed)
-            # Parent class already sets self.device, so we can use it directly
+            # Verify device is set by parent class
+            if not hasattr(self, 'device'):
+                self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.room = room_tensor.to(self.device)
             self.h, self.w = self.room.shape
             self.start_pos = start_pos
             self.no_up = set(no_up)
