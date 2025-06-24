@@ -33,7 +33,12 @@ class CSCGEnvironmentAdapter:
             assert isinstance(self.n_actions, int), f"n_actions must be int, got {type(self.n_actions)}"
             action = self.rng.choice(self.n_actions)
             
-            # Debug: check types before conversion
+            # Debug: check types before conversion - but convert tensors first
+            if hasattr(action, 'item'):  # It's a tensor
+                action = action.item()
+            if hasattr(obs, 'item'):  # It's a tensor  
+                obs = obs.item()
+                
             assert isinstance(action, (int, np.integer)), f"action must be int, got {type(action)}: {action}"
             assert isinstance(obs, int), f"obs must be int, got {type(obs)}: {obs}"
             
@@ -55,7 +60,7 @@ class RoomTorchAdapter(CSCGEnvironmentAdapter):
     def __init__(self, room_tensor, no_up=[], no_down=[], no_left=[], no_right=[], start_pos=None, seed=42):
         super().__init__(seed=seed)
         self.room = room_tensor.to(self.device)
-        self.h, self.w = self.room.shape
+        self.h, self.w = int(self.room.shape[0]), int(self.room.shape[1])
         self.start_pos = start_pos
         self.no_up = set(no_up)
         self.no_down = set(no_down)
@@ -85,7 +90,9 @@ class RoomTorchAdapter(CSCGEnvironmentAdapter):
     def step(self, action):
         dr, dc = self.action_map[action]
         r, c = self.pos
-        new_r, new_c = r + dr, c + dc
+        # Ensure positions are Python ints
+        r, c = int(r), int(c)
+        new_r, new_c = int(r + dr), int(c + dc)
         
         # Boundary checks
         if not (0 <= new_r < self.h and 0 <= new_c < self.w):
@@ -104,7 +111,7 @@ class RoomTorchAdapter(CSCGEnvironmentAdapter):
         if action == 3 and flat_idx in self.no_right:
             return self.get_observation(), False
         
-        self.pos = (new_r, new_c)
+        self.pos = (int(new_r), int(new_c))
         return self.get_observation(), True
     
     def get_observation(self):
