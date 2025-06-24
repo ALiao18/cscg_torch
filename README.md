@@ -1,6 +1,6 @@
 # CSCG PyTorch
 
-A GPU-optimized PyTorch implementation of Compositional Structured Context-Sensitive Grammar (CSCG) Hidden Markov Models using the Baum-Welch EM algorithm.
+A GPU-optimized PyTorch implementation of Clone-Structured Cognitive Graphs (CSCG) Cloned Hidden Markov Models (CHMM) trained using the Baum-Welch EM algorithm. This is adapted from Vicarious AI's Paper "Clone-structured graph representations enable flexible learning and vicarious evaluation of cognitive maps"
 
 ## Features
 
@@ -174,19 +174,6 @@ See the `examples/` directory for:
 - Advanced emission learning
 - Environment integration
 - Performance benchmarks
-
-## Citation
-
-If you use this code in your research, please cite:
-
-```bibtex
-@software{cscg_torch,
-  title={CSCG PyTorch: GPU-Optimized Implementation},
-  author={Research Team},
-  year={2024},
-  url={https://github.com/your-repo/cscg_torch}
-}
-```
 
 ## License
 
