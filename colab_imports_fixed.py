@@ -33,7 +33,10 @@ class CSCGEnvironmentAdapter:
             if valid:
                 x_seq.append(obs)
                 a_seq.append(action)
-        return np.array(x_seq), np.array(a_seq)
+        # Return PyTorch tensors on the correct device (GPU-compatible)
+        x_tensor = torch.tensor(x_seq, dtype=torch.int64, device=self.device)
+        a_tensor = torch.tensor(a_seq, dtype=torch.int64, device=self.device)
+        return x_tensor, a_tensor
 
 # Define RoomTorchAdapter at module level
 class RoomTorchAdapter(CSCGEnvironmentAdapter):
@@ -146,10 +149,11 @@ def test_setup():
     
     # Test sequences
     x, a = env.generate_sequence(10)
-    print(f"✓ Sequences: x={len(x)}, a={len(a)}")
+    print(f"✓ Sequences: x={x.shape}, a={a.shape}")
+    print(f"✓ Sequence devices: x={x.device}, a={a.device}")
     
     if CHMM_torch:
-        model = CHMM_torch(n_clones, torch.tensor(x), torch.tensor(a))
+        model = CHMM_torch(n_clones, x, a)  # Now x,a are already tensors
         print(f"✓ Model: {model.device}")
     
     print("🎉 All tests passed!")
