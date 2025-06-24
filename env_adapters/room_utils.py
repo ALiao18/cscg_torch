@@ -6,7 +6,6 @@ Helper functions for working with room-based environments and CHMM models.
 
 import torch
 
-
 def create_room_adapter(room_data, adapter_type="torch", **kwargs):
     """
     Create a room adapter from room data.
@@ -26,11 +25,14 @@ def create_room_adapter(room_data, adapter_type="torch", **kwargs):
         try:
             from room_adapter import RoomTorchAdapter, RoomNPAdapter
         except ImportError:
-            raise ImportError("Could not import room adapters. Make sure room_adapter.py is available.")
+            raise ImportError("Could not import room adapters. Use colab_imports.py instead.")
     
     if adapter_type == "torch":
         if not isinstance(room_data, torch.Tensor):
             room_data = torch.tensor(room_data)
+        # Ensure device is provided for RoomTorchAdapter
+        if 'device' not in kwargs:
+            kwargs['device'] = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         return RoomTorchAdapter(room_data, **kwargs)
     else:
         if isinstance(room_data, torch.Tensor):
@@ -71,7 +73,7 @@ def demo_room_setup():
     room_tensor[:, 0] = -1  # Left wall
     room_tensor[:, -1] = -1  # Right wall
     
-    # Create adapter using dynamic import
+    # Create adapter
     adapter = create_room_adapter(room_tensor)
     n_clones = get_room_n_clones(n_clones_per_obs=2)
     
