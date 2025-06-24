@@ -73,6 +73,7 @@ class RoomTorchAdapter(CSCGEnvironmentAdapter):
     def __init__(self, room_tensor, device, no_up=[], no_down=[], no_left=[], no_right=[], start_pos=None, seed=42):
         super().__init__(seed=seed)
         # Ensure room tensor is on the correct device
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.room = room_tensor.to(self.device)
         self.h, self.w = self.room.shape
         self.start_pos = start_pos
@@ -80,7 +81,6 @@ class RoomTorchAdapter(CSCGEnvironmentAdapter):
         self.no_down = set(no_down)
         self.no_left = set(no_left)
         self.no_right = set(no_right)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.action_map = ACTIONS
         self.n_actions = 4
