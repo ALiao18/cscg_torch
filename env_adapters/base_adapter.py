@@ -4,6 +4,7 @@ import torch
 class CSCGEnvironmentAdapter:
     def __init__(self, seed=42):
         self.rng = np.random.RandomState(seed)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def reset(self):
         raise NotImplementedError
