@@ -32,8 +32,7 @@ def setup_colab_imports():
         
         def __init__(self, room_tensor, no_up=[], no_down=[], no_left=[], no_right=[], start_pos=None, seed=42):
             super().__init__(seed=seed)
-            # Override device if provided, otherwise use parent's device
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            # Parent class already sets self.device, so we can use it directly
             self.room = room_tensor.to(self.device)
             self.h, self.w = self.room.shape
             self.start_pos = start_pos
@@ -93,13 +92,11 @@ def setup_colab_imports():
             return obs
     
     # Utility functions
-    def create_room_adapter(room_data, device=None, **kwargs):
+    def create_room_adapter(room_data, **kwargs):
         """Create a room adapter from tensor data."""
         if not isinstance(room_data, torch.Tensor):
             room_data = torch.tensor(room_data)
-        if device is None:
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        return RoomTorchAdapter(room_data, device=device, **kwargs)
+        return RoomTorchAdapter(room_data, **kwargs)
     
     def get_room_n_clones(n_clones_per_obs=1, device=None):
         """Get n_clones tensor for room navigation."""
