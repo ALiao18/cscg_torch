@@ -12,10 +12,37 @@ ACTIONS = {
 
 class RoomNPAdapter(CSCGEnvironmentAdapter):
     def __init__(self, room_array, no_up=[], no_down=[], no_left=[], no_right=[], start_pos=None, seed=42):
+        # Strict input validation
+        assert isinstance(room_array, np.ndarray), f"room_array must be numpy array, got {type(room_array)}"
+        assert room_array.ndim == 2, f"room_array must be 2D, got {room_array.ndim}D"
+        assert room_array.dtype in [np.int32, np.int64], f"room_array must be integer type, got {room_array.dtype}"
+        assert room_array.size > 0, "room_array cannot be empty"
+        
         super().__init__(seed=seed)
+        
         self.room = room_array
-        self.h, self.w = self.room.shape
+        self.h, self.w = int(self.room.shape[0]), int(self.room.shape[1])
+        
+        # Validate dimensions
+        assert self.h > 0 and self.w > 0, f"Invalid room dimensions: {self.h}x{self.w}"
+        
+        # Validate start position
+        if start_pos is not None:
+            assert isinstance(start_pos, (tuple, list)), f"start_pos must be tuple/list, got {type(start_pos)}"
+            assert len(start_pos) == 2, f"start_pos must have 2 elements, got {len(start_pos)}"
+            r, c = start_pos
+            assert isinstance(r, int) and isinstance(c, int), f"start_pos elements must be int, got {type(r)}, {type(c)}"
+            assert 0 <= r < self.h and 0 <= c < self.w, f"start_pos {start_pos} out of bounds for {self.h}x{self.w} room"
+        
         self.start_pos = start_pos
+        
+        # Validate wall lists
+        for wall_list, name in [(no_up, "no_up"), (no_down, "no_down"), (no_left, "no_left"), (no_right, "no_right")]:
+            assert isinstance(wall_list, (list, tuple, set)), f"{name} must be list/tuple/set, got {type(wall_list)}"
+            for idx in wall_list:
+                assert isinstance(idx, int), f"{name} elements must be int, got {type(idx)}"
+                assert 0 <= idx < self.h * self.w, f"{name} index {idx} out of bounds for {self.h}x{self.w} room"
+        
         self.no_up = set(no_up)
         self.no_down = set(no_down)
         self.no_left = set(no_left)
@@ -24,29 +51,76 @@ class RoomNPAdapter(CSCGEnvironmentAdapter):
 
         self.action_map = ACTIONS
         self.n_actions = 4
+        
+        # Post-initialization validation
+        assert isinstance(self.n_actions, int), f"n_actions must be int, got {type(self.n_actions)}"
+        assert self.n_actions == len(ACTIONS), f"n_actions mismatch: {self.n_actions} != {len(ACTIONS)}"
+        
         self.reset()
 
     def reset(self):
+        # Strict validation for reset operation
+        assert hasattr(self, 'room'), "room must be initialized"
+        assert hasattr(self, 'rng'), "rng must be initialized"
+        assert isinstance(self.room, np.ndarray), f"room must be numpy array, got {type(self.room)}"
+        
         if self.start_pos is None:
             free_positions = np.argwhere(self.room != -1)
+            assert len(free_positions) > 0, "No free positions found in room"
+            assert isinstance(free_positions, np.ndarray), f"free_positions must be numpy array, got {type(free_positions)}"
+            
             idx = self.rng.choice(len(free_positions))
-            self.pos = tuple(free_positions[idx])
+            assert isinstance(idx, (int, np.integer)), f"idx must be int, got {type(idx)}"
+            assert 0 <= idx < len(free_positions), f"idx {idx} out of range [0, {len(free_positions)})"
+            
+            selected_pos = free_positions[idx]
+            assert len(selected_pos) == 2, f"selected_pos must have 2 elements, got {len(selected_pos)}"
+            self.pos = tuple(int(x) for x in selected_pos)
         else:
+            assert self.start_pos is not None, "start_pos validation failed"
             self.pos = tuple(self.start_pos)
+        
+        # Validate final position
+        assert isinstance(self.pos, tuple), f"pos must be tuple, got {type(self.pos)}"
+        assert len(self.pos) == 2, f"pos must have 2 elements, got {len(self.pos)}"
+        r, c = self.pos
+        assert isinstance(r, int) and isinstance(c, int), f"pos elements must be int, got {type(r)}, {type(c)}"
+        assert 0 <= r < self.h and 0 <= c < self.w, f"pos {self.pos} out of bounds for {self.h}x{self.w} room"
+        
         return self.get_observation()
 
     def step(self, action):
+        # Strict input validation
+        assert isinstance(action, (int, np.integer)), f"action must be int, got {type(action)}"
+        assert 0 <= action < self.n_actions, f"action {action} out of range [0, {self.n_actions})"
+        assert action in self.action_map, f"action {action} not in action_map {list(self.action_map.keys())}"
+        
+        # Validate current state
+        assert hasattr(self, 'pos'), "pos must be set (call reset() first)"
+        assert isinstance(self.pos, tuple), f"pos must be tuple, got {type(self.pos)}"
+        assert len(self.pos) == 2, f"pos must have 2 elements, got {len(self.pos)}"
+        
         dr, dc = self.action_map[action]
+        assert isinstance(dr, int) and isinstance(dc, int), f"action_map values must be int, got {type(dr)}, {type(dc)}"
+        
         r, c = self.pos
+        assert isinstance(r, int) and isinstance(c, int), f"pos elements must be int, got {type(r)}, {type(c)}"
+        
         new_r, new_c = r + dr, c + dc
 
+        # Boundary check
         if not (0 <= new_r < self.h and 0 <= new_c < self.w):
             return self.get_observation(), False
+        
+        # Wall check
         if self.room[new_r, new_c] == -1:
             return self.get_observation(), False
 
         # Invisible wall checks
         flat_idx = r * self.w + c
+        assert isinstance(flat_idx, int), f"flat_idx must be int, got {type(flat_idx)}"
+        assert 0 <= flat_idx < self.h * self.w, f"flat_idx {flat_idx} out of bounds for {self.h}x{self.w} room"
+        
         if action == 0 and flat_idx in self.no_up:
             return self.get_observation(), False
         if action == 1 and flat_idx in self.no_down:
@@ -56,27 +130,74 @@ class RoomNPAdapter(CSCGEnvironmentAdapter):
         if action == 3 and flat_idx in self.no_right:
             return self.get_observation(), False
 
-        self.pos = (new_r, new_c)
+        # Update position
+        self.pos = (int(new_r), int(new_c))
         return self.get_observation(), True
 
     def get_observation(self):
+        # Strict validation for observation generation
+        assert hasattr(self, 'pos'), "pos must be set (call reset() first)"
+        assert isinstance(self.pos, tuple), f"pos must be tuple, got {type(self.pos)}"
+        assert len(self.pos) == 2, f"pos must have 2 elements, got {len(self.pos)}"
+        
         r, c = self.pos
-        # You can later switch this to a learned embedding
-        up    = self.room[r - 1, c] != -1 if r > 0     else 0
-        down  = self.room[r + 1, c] != -1 if r < self.h - 1 else 0
-        left  = self.room[r, c - 1] != -1 if c > 0     else 0
-        right = self.room[r, c + 1] != -1 if c < self.w - 1 else 0
+        assert isinstance(r, int) and isinstance(c, int), f"pos elements must be int, got {type(r)}, {type(c)}"
+        assert 0 <= r < self.h and 0 <= c < self.w, f"pos {self.pos} out of bounds for {self.h}x{self.w} room"
+        
+        # Check walls in all directions
+        up    = int(self.room[r - 1, c] != -1) if r > 0     else 0
+        down  = int(self.room[r + 1, c] != -1) if r < self.h - 1 else 0
+        left  = int(self.room[r, c - 1] != -1) if c > 0     else 0
+        right = int(self.room[r, c + 1] != -1) if c < self.w - 1 else 0
+        
+        # Validate wall check results
+        for val, name in [(up, "up"), (down, "down"), (left, "left"), (right, "right")]:
+            assert isinstance(val, int), f"{name} must be int, got {type(val)}"
+            assert val in [0, 1], f"{name} must be 0 or 1, got {val}"
+        
         obs = (up << 3) + (down << 2) + (left << 1) + right
+        
+        # Final validation
+        assert isinstance(obs, int), f"obs must be int, got {type(obs)}"
+        assert 0 <= obs <= 15, f"obs {obs} out of range [0, 15]"
+        
         return obs
 
 class RoomTorchAdapter(CSCGEnvironmentAdapter):
     def __init__(self, room_tensor, no_up=[], no_down=[], no_left=[], no_right=[], start_pos=None, seed=42):
+        # Strict input validation for PyTorch tensor
+        assert isinstance(room_tensor, torch.Tensor), f"room_tensor must be torch.Tensor, got {type(room_tensor)}"
+        assert room_tensor.ndim == 2, f"room_tensor must be 2D, got {room_tensor.ndim}D"
+        assert room_tensor.dtype in [torch.int32, torch.int64, torch.long], f"room_tensor must be integer type, got {room_tensor.dtype}"
+        assert room_tensor.numel() > 0, "room_tensor cannot be empty"
+        
         super().__init__(seed=seed)
+        
         # Ensure room tensor is on the correct device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.room = room_tensor.to(self.device)
-        self.h, self.w = self.room.shape
+        self.h, self.w = int(self.room.shape[0]), int(self.room.shape[1])
+        
+        # Validate dimensions
+        assert self.h > 0 and self.w > 0, f"Invalid room dimensions: {self.h}x{self.w}"
+        
+        # Validate start position
+        if start_pos is not None:
+            assert isinstance(start_pos, (tuple, list)), f"start_pos must be tuple/list, got {type(start_pos)}"
+            assert len(start_pos) == 2, f"start_pos must have 2 elements, got {len(start_pos)}"
+            r, c = start_pos
+            assert isinstance(r, int) and isinstance(c, int), f"start_pos elements must be int, got {type(r)}, {type(c)}"
+            assert 0 <= r < self.h and 0 <= c < self.w, f"start_pos {start_pos} out of bounds for {self.h}x{self.w} room"
+        
         self.start_pos = start_pos
+        
+        # Validate wall lists
+        for wall_list, name in [(no_up, "no_up"), (no_down, "no_down"), (no_left, "no_left"), (no_right, "no_right")]:
+            assert isinstance(wall_list, (list, tuple, set)), f"{name} must be list/tuple/set, got {type(wall_list)}"
+            for idx in wall_list:
+                assert isinstance(idx, int), f"{name} elements must be int, got {type(idx)}"
+                assert 0 <= idx < self.h * self.w, f"{name} index {idx} out of bounds for {self.h}x{self.w} room"
+        
         self.no_up = set(no_up)
         self.no_down = set(no_down)
         self.no_left = set(no_left)
@@ -84,29 +205,83 @@ class RoomTorchAdapter(CSCGEnvironmentAdapter):
 
         self.action_map = ACTIONS
         self.n_actions = 4
+        
+        # Post-initialization validation
+        assert isinstance(self.n_actions, int), f"n_actions must be int, got {type(self.n_actions)}"
+        assert self.n_actions == len(ACTIONS), f"n_actions mismatch: {self.n_actions} != {len(ACTIONS)}"
+        assert self.room.device == self.device, f"Room tensor device mismatch: {self.room.device} != {self.device}"
+        
         self.reset()
 
     def reset(self):
+        # Strict validation for reset operation
+        assert hasattr(self, 'room'), "room must be initialized"
+        assert hasattr(self, 'rng'), "rng must be initialized"
+        assert isinstance(self.room, torch.Tensor), f"room must be torch.Tensor, got {type(self.room)}"
+        assert self.room.device == self.device, f"room device mismatch: {self.room.device} != {self.device}"
+        
         if self.start_pos is None:
             free_positions = (self.room != -1).nonzero(as_tuple=False)
+            assert isinstance(free_positions, torch.Tensor), f"free_positions must be torch.Tensor, got {type(free_positions)}"
+            assert len(free_positions) > 0, "No free positions found in room"
+            
             idx = self.rng.choice(len(free_positions))
-            self.pos = tuple(free_positions[idx].tolist())
+            assert isinstance(idx, (int, np.integer)), f"idx must be int, got {type(idx)}"
+            assert 0 <= idx < len(free_positions), f"idx {idx} out of range [0, {len(free_positions)})"
+            
+            selected_pos = free_positions[idx].tolist()
+            assert isinstance(selected_pos, list), f"selected_pos must be list, got {type(selected_pos)}"
+            assert len(selected_pos) == 2, f"selected_pos must have 2 elements, got {len(selected_pos)}"
+            self.pos = tuple(int(x) for x in selected_pos)
         else:
+            assert self.start_pos is not None, "start_pos validation failed"
             self.pos = tuple(self.start_pos)
+        
+        # Validate final position
+        assert isinstance(self.pos, tuple), f"pos must be tuple, got {type(self.pos)}"
+        assert len(self.pos) == 2, f"pos must have 2 elements, got {len(self.pos)}"
+        r, c = self.pos
+        assert isinstance(r, int) and isinstance(c, int), f"pos elements must be int, got {type(r)}, {type(c)}"
+        assert 0 <= r < self.h and 0 <= c < self.w, f"pos {self.pos} out of bounds for {self.h}x{self.w} room"
+        
         return self.get_observation()
 
     def step(self, action):
+        # Strict input validation
+        assert isinstance(action, (int, np.integer)), f"action must be int, got {type(action)}"
+        assert 0 <= action < self.n_actions, f"action {action} out of range [0, {self.n_actions})"
+        assert action in self.action_map, f"action {action} not in action_map {list(self.action_map.keys())}"
+        
+        # Validate current state
+        assert hasattr(self, 'pos'), "pos must be set (call reset() first)"
+        assert isinstance(self.pos, tuple), f"pos must be tuple, got {type(self.pos)}"
+        assert len(self.pos) == 2, f"pos must have 2 elements, got {len(self.pos)}"
+        assert hasattr(self, 'room'), "room must be initialized"
+        assert self.room.device == self.device, f"room device mismatch: {self.room.device} != {self.device}"
+        
         dr, dc = self.action_map[action]
+        assert isinstance(dr, int) and isinstance(dc, int), f"action_map values must be int, got {type(dr)}, {type(dc)}"
+        
         r, c = self.pos
+        assert isinstance(r, int) and isinstance(c, int), f"pos elements must be int, got {type(r)}, {type(c)}"
+        
         new_r, new_c = r + dr, c + dc
 
+        # Boundary check
         if not (0 <= new_r < self.h and 0 <= new_c < self.w):
             return self.get_observation(), False
-        if self.room[new_r, new_c] == -1:
+        
+        # Wall check (tensor comparison)
+        wall_check = self.room[new_r, new_c] == -1
+        assert isinstance(wall_check, torch.Tensor), f"wall_check must be tensor, got {type(wall_check)}"
+        if wall_check.item():
             return self.get_observation(), False
 
         # Invisible wall checks
         flat_idx = r * self.w + c
+        assert isinstance(flat_idx, int), f"flat_idx must be int, got {type(flat_idx)}"
+        assert 0 <= flat_idx < self.h * self.w, f"flat_idx {flat_idx} out of bounds for {self.h}x{self.w} room"
+        
         if action == 0 and flat_idx in self.no_up:
             return self.get_observation(), False
         if action == 1 and flat_idx in self.no_down:
@@ -116,15 +291,37 @@ class RoomTorchAdapter(CSCGEnvironmentAdapter):
         if action == 3 and flat_idx in self.no_right:
             return self.get_observation(), False
 
-        self.pos = (new_r, new_c)
+        # Update position
+        self.pos = (int(new_r), int(new_c))
         return self.get_observation(), True
 
     def get_observation(self):
+        # Strict validation for observation generation
+        assert hasattr(self, 'pos'), "pos must be set (call reset() first)"
+        assert isinstance(self.pos, tuple), f"pos must be tuple, got {type(self.pos)}"
+        assert len(self.pos) == 2, f"pos must have 2 elements, got {len(self.pos)}"
+        assert hasattr(self, 'room'), "room must be initialized"
+        assert self.room.device == self.device, f"room device mismatch: {self.room.device} != {self.device}"
+        
         r, c = self.pos
-        # can later switch this to a learned embedding
-        up    = self.room[r - 1, c] != -1 if r > 0     else 0
-        down  = self.room[r + 1, c] != -1 if r < self.h - 1 else 0
-        left  = self.room[r, c - 1] != -1 if c > 0     else 0
-        right = self.room[r, c + 1] != -1 if c < self.w - 1 else 0
+        assert isinstance(r, int) and isinstance(c, int), f"pos elements must be int, got {type(r)}, {type(c)}"
+        assert 0 <= r < self.h and 0 <= c < self.w, f"pos {self.pos} out of bounds for {self.h}x{self.w} room"
+        
+        # Check walls in all directions (convert tensor comparisons to Python ints)
+        up    = int((self.room[r - 1, c] != -1).item()) if r > 0     else 0
+        down  = int((self.room[r + 1, c] != -1).item()) if r < self.h - 1 else 0
+        left  = int((self.room[r, c - 1] != -1).item()) if c > 0     else 0
+        right = int((self.room[r, c + 1] != -1).item()) if c < self.w - 1 else 0
+        
+        # Validate wall check results
+        for val, name in [(up, "up"), (down, "down"), (left, "left"), (right, "right")]:
+            assert isinstance(val, int), f"{name} must be int, got {type(val)}"
+            assert val in [0, 1], f"{name} must be 0 or 1, got {val}"
+        
         obs = (up << 3) + (down << 2) + (left << 1) + right
+        
+        # Final validation
+        assert isinstance(obs, int), f"obs must be int, got {type(obs)}"
+        assert 0 <= obs <= 15, f"obs {obs} out of range [0, 15]"
+        
         return obs

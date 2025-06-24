@@ -6,11 +6,13 @@ Simplified imports for Google Colab to avoid all import issues.
 
 import torch
 import numpy as np
+import random
 
 # Define base adapter at module level to avoid scoping issues
 class CSCGEnvironmentAdapter:
     def __init__(self, seed=42):
         self.rng = np.random.RandomState(seed)
+        self.py_random = random.Random(seed)  # Backup Python random
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.n_actions = None
     
@@ -29,16 +31,28 @@ class CSCGEnvironmentAdapter:
         for _ in range(length):
             obs = self.get_observation()
             
-            # Ensure n_actions is Python int
-            assert isinstance(self.n_actions, int), f"n_actions must be int, got {type(self.n_actions)}"
-            action = self.rng.choice(self.n_actions)
+            # Ensure n_actions is Python int and debug if it's not
+            if not isinstance(self.n_actions, int):
+                print(f"ERROR: n_actions corrupted! Type: {type(self.n_actions)}, Value: {self.n_actions}")
+                self.n_actions = 4  # Reset to correct value
             
-            # Debug: check types before conversion - but convert tensors first
-            if hasattr(action, 'item'):  # It's a tensor
-                action = action.item()
-            if hasattr(obs, 'item'):  # It's a tensor  
-                obs = obs.item()
+            # Ensure rng is numpy RandomState
+            if not isinstance(self.rng, np.random.RandomState):
+                print(f"ERROR: rng corrupted! Type: {type(self.rng)}")
+                self.rng = np.random.RandomState(42)
+            
+            # Use pure Python random to avoid any tensor contamination
+            action = self.py_random.randint(0, int(self.n_actions) - 1)
+            
+            # Debug: check types and convert if needed
+            if hasattr(action, 'item'):  # It's a tensor - this shouldn't happen!
+                print(f"WARNING: action is tensor! Type: {type(action)}, Value: {action}")
+                action = int(action.cpu().item()) if action.is_cuda else int(action.item())
+            
+            if hasattr(obs, 'item'):  # It's a tensor
+                obs = int(obs.cpu().item()) if obs.is_cuda else int(obs.item())
                 
+            # Final type checks
             assert isinstance(action, (int, np.integer)), f"action must be int, got {type(action)}: {action}"
             assert isinstance(obs, int), f"obs must be int, got {type(obs)}: {obs}"
             
@@ -68,16 +82,16 @@ class RoomTorchAdapter(CSCGEnvironmentAdapter):
         self.no_right = set(no_right)
         
         self.action_map = {0: (-1, 0), 1: (1, 0), 2: (0, -1), 3: (0, 1)}  # up, down, left, right
-        self.n_actions = 4
+        self.n_actions = 4  # Explicitly Python int
         self.reset()
     
     def reset(self):
         if self.start_pos is None:
             free_positions = (self.room != -1).nonzero(as_tuple=False)
             if len(free_positions) > 0:
-                # Ensure we use Python int for choice
+                # Use Python random for consistency
                 num_positions = int(len(free_positions))
-                idx = self.rng.choice(num_positions)
+                idx = self.py_random.randint(0, num_positions - 1)
                 # Convert tensor indices to Python ints
                 selected_pos = free_positions[idx].tolist()
                 self.pos = tuple(int(x) for x in selected_pos)

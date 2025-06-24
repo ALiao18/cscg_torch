@@ -9,16 +9,35 @@ def validate_seq(x, a, n_clones = None):
     """
     validate the sequence of observations and actions
     """
-    assert len(x) == len(a) > 0
-    assert len(x.shape) == len(a.shape) == 1, "Flatten your array first"
-    assert x.dtype == a.dtype == torch.int64, "both observations and actions must discrete values"
-    assert 0 <= x.min(), "Number of emissions inconsistent with training sequence"
+    # Strict input validation
+    assert isinstance(x, torch.Tensor), f"x must be torch.Tensor, got {type(x)}"
+    assert isinstance(a, torch.Tensor), f"a must be torch.Tensor, got {type(a)}"
+    
+    assert len(x) == len(a), f"sequence lengths must match: x={len(x)}, a={len(a)}"
+    assert len(x) > 0, "sequences cannot be empty"
+    
+    assert len(x.shape) == 1, f"x must be 1D, got {x.ndim}D"
+    assert len(a.shape) == 1, f"a must be 1D, got {a.ndim}D"
+    
+    assert x.dtype == torch.int64, f"x must be int64, got {x.dtype}"
+    assert a.dtype == torch.int64, f"a must be int64, got {a.dtype}"
+    
+    assert x.min() >= 0, f"x values must be non-negative, got min {x.min()}"
+    assert a.min() >= 0, f"a values must be non-negative, got min {a.min()}"
+    
     if n_clones is not None:
-        assert len(n_clones.shape) == 1, "Flatten your array first"
-        assert n_clones.dtype == torch.int64, "n_clones must be discrete int"
-        assert torch.all(n_clones > 0), "You can't provide zero clones for any emission"
+        assert isinstance(n_clones, torch.Tensor), f"n_clones must be torch.Tensor, got {type(n_clones)}"
+        assert len(n_clones.shape) == 1, f"n_clones must be 1D, got {n_clones.ndim}D"
+        assert n_clones.dtype == torch.int64, f"n_clones must be int64, got {n_clones.dtype}"
+        assert torch.all(n_clones > 0), "all n_clones values must be positive"
+        
         n_emissions = n_clones.shape[0]
-        assert x.max().item() < n_emissions, "Number of emissions inconsistent with training sequence"
+        assert isinstance(n_emissions, int), f"n_emissions must be int, got {type(n_emissions)}"
+        assert n_emissions > 0, f"n_emissions must be positive, got {n_emissions}"
+        
+        x_max = x.max().item()
+        assert isinstance(x_max, int), f"x_max must be int, got {type(x_max)}"
+        assert x_max < n_emissions, f"x values out of range: max {x_max} >= n_emissions {n_emissions}"
 
 def forward(T_tr, Pi, n_clones, x, a, device, store_messages = False):
     """
@@ -31,6 +50,29 @@ def forward(T_tr, Pi, n_clones, x, a, device, store_messages = False):
     a: action sequence
     store_messages: whether to store messages
     """
+    # Strict input validation
+    assert isinstance(T_tr, torch.Tensor), f"T_tr must be torch.Tensor, got {type(T_tr)}"
+    assert isinstance(Pi, torch.Tensor), f"Pi must be torch.Tensor, got {type(Pi)}"
+    assert isinstance(n_clones, torch.Tensor), f"n_clones must be torch.Tensor, got {type(n_clones)}"
+    assert isinstance(x, torch.Tensor), f"x must be torch.Tensor, got {type(x)}"
+    assert isinstance(a, torch.Tensor), f"a must be torch.Tensor, got {type(a)}"
+    assert isinstance(device, torch.device), f"device must be torch.device, got {type(device)}"
+    assert isinstance(store_messages, bool), f"store_messages must be bool, got {type(store_messages)}"
+    
+    assert T_tr.ndim == 3, f"T_tr must be 3D, got {T_tr.ndim}D"
+    assert Pi.ndim == 1, f"Pi must be 1D, got {Pi.ndim}D"
+    assert n_clones.ndim == 1, f"n_clones must be 1D, got {n_clones.ndim}D"
+    assert x.ndim == 1, f"x must be 1D, got {x.ndim}D"
+    assert a.ndim == 1, f"a must be 1D, got {a.ndim}D"
+    
+    assert len(x) == len(a), f"sequence lengths must match: x={len(x)}, a={len(a)}"
+    assert len(x) > 0, "sequences cannot be empty"
+    
+    n_states = Pi.shape[0]
+    assert T_tr.shape[1] == n_states, f"T_tr dim 1 mismatch: {T_tr.shape[1]} != {n_states}"
+    assert T_tr.shape[2] == n_states, f"T_tr dim 2 mismatch: {T_tr.shape[2]} != {n_states}"
+    assert n_clones.sum() == n_states, f"n_clones sum mismatch: {n_clones.sum()} != {n_states}"
+    
     # Ensure all tensors are on the correct device
     x, a = x.to(device), a.to(device)
     Pi, n_clones = Pi.to(device), n_clones.to(device)
@@ -66,20 +108,52 @@ def forward(T_tr, Pi, n_clones, x, a, device, store_messages = False):
     for t in range(1, x.shape[0]):
         ajt = a[t - 1]
         i, j = x[t - 1], x[t]
+        
+        # Validate indices
+        assert isinstance(ajt.item(), int), f"ajt must be int, got {type(ajt.item())}"
+        assert isinstance(i.item(), int), f"i must be int, got {type(i.item())}"
+        assert isinstance(j.item(), int), f"j must be int, got {type(j.item())}"
+        assert 0 <= ajt < T_tr.shape[0], f"ajt {ajt} out of range [0, {T_tr.shape[0]})"
+        assert 0 <= i < len(n_clones), f"i {i} out of range [0, {len(n_clones)})"
+        assert 0 <= j < len(n_clones), f"j {j} out of range [0, {len(n_clones)})"
+        
         i_start, i_stop = state_loc[i : i + 2]
         j_start, j_stop = state_loc[j : j + 2]
+        
+        # Validate slice indices
+        assert i_start < i_stop, f"invalid i slice: {i_start} >= {i_stop}"
+        assert j_start < j_stop, f"invalid j slice: {j_start} >= {j_stop}"
+        assert 0 <= i_start and i_stop <= T_len, f"i slice [{i_start}:{i_stop}] out of range [0:{T_len}]"
+        assert 0 <= j_start and j_stop <= T_len, f"j slice [{j_start}:{j_stop}] out of range [0:{T_len}]"
 
         # matrix vector multiplication
         T_tr_slice = T_tr[ajt, j_start:j_stop, i_start:i_stop]
+        assert T_tr_slice.ndim == 2, f"T_tr_slice must be 2D, got {T_tr_slice.ndim}D"
+        
         message = torch.matmul(T_tr_slice, message)
+        assert isinstance(message, torch.Tensor), f"message must be tensor, got {type(message)}"
+        
         p_obs = message.sum()
-        assert p_obs > 0, "Probability of observation is zero"
+        assert isinstance(p_obs, torch.Tensor), f"p_obs must be tensor, got {type(p_obs)}"
+        assert p_obs > 0, f"Probability of observation is zero at t={t}"
+        
         message = message / p_obs
         log2_lik[t] = torch.log2(p_obs)
 
         if store_messages:
             t_start, t_stop = mess_loc[t : t + 2]
+            assert t_start < t_stop, f"invalid message slice: {t_start} >= {t_stop}"
             mess_fwd[t_start:t_stop] = message
+    
+    # Final validation
+    assert isinstance(log2_lik, torch.Tensor), f"log2_lik must be tensor, got {type(log2_lik)}"
+    assert log2_lik.shape == (len(x),), f"log2_lik shape mismatch: {log2_lik.shape} != ({len(x)},)"
+    
+    if store_messages:
+        assert isinstance(mess_fwd, torch.Tensor), f"mess_fwd must be tensor, got {type(mess_fwd)}"
+    else:
+        assert mess_fwd is None, f"mess_fwd must be None when store_messages=False, got {type(mess_fwd)}"
+    
     return log2_lik, mess_fwd
 
 def forwardE(T_tr, E, Pi, n_clones, x, a, device, store_messages = False):

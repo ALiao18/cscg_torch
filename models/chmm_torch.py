@@ -20,22 +20,62 @@ class CHMM_torch(object):
         a: action sequence
         pseudocount: pseudocount for the transition matrix
         """
+        # Strict input validation
+        assert isinstance(n_clones, torch.Tensor), f"n_clones must be torch.Tensor, got {type(n_clones)}"
+        assert n_clones.ndim == 1, f"n_clones must be 1D, got {n_clones.ndim}D"
+        assert n_clones.dtype in [torch.int32, torch.int64, torch.long], f"n_clones must have integer dtype, got {n_clones.dtype}"
+        assert torch.all(n_clones > 0), "all n_clones values must be positive"
+        
+        assert isinstance(x, torch.Tensor), f"x must be torch.Tensor, got {type(x)}"
+        assert x.ndim == 1, f"x must be 1D, got {x.ndim}D"
+        assert x.dtype in [torch.int32, torch.int64, torch.long], f"x must have integer dtype, got {x.dtype}"
+        
+        assert isinstance(a, torch.Tensor), f"a must be torch.Tensor, got {type(a)}"
+        assert a.ndim == 1, f"a must be 1D, got {a.ndim}D"
+        assert a.dtype in [torch.int32, torch.int64, torch.long], f"a must have integer dtype, got {a.dtype}"
+        
+        assert len(x) == len(a), f"sequence lengths must match: x={len(x)}, a={len(a)}"
+        assert len(x) > 0, "sequences cannot be empty"
+        
+        assert isinstance(pseudocount, (int, float)), f"pseudocount must be numeric, got {type(pseudocount)}"
+        assert pseudocount >= 0.0, f"pseudocount must be non-negative, got {pseudocount}"
+        
+        assert isinstance(seed, int), f"seed must be int, got {type(seed)}"
+        assert seed >= 0, f"seed must be non-negative, got {seed}"
+        
         np.random.seed(seed)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        # Move tensors to device
+        self.n_clones = n_clones.to(self.device)
+        x = x.to(self.device)
+        a = a.to(self.device)
 
         # ==== Validate Sequence ====
-        self.n_clones = n_clones
         validate_seq(x, a, self.n_clones)
-        assert pseudocount >= 0.0, "The pseudocount should be non-negative"
 
         # ==== Initialize Parameters ====
+        assert dtype in [torch.float16, torch.float32, torch.float64], f"dtype must be float type, got {dtype}"
         self.dtype = dtype
-        self.pseudocount = pseudocount
+        self.pseudocount = float(pseudocount)
+        
         n_states = self.n_clones.sum()
+        assert isinstance(n_states, torch.Tensor), f"n_states must be tensor, got {type(n_states)}"
+        assert n_states > 0, f"total states must be positive, got {n_states}"
+        
         n_actions = a.max() + 1 
+        assert isinstance(n_actions, torch.Tensor), f"n_actions must be tensor, got {type(n_actions)}"
+        assert n_actions > 0, f"n_actions must be positive, got {n_actions}"
+        
         self.C = torch.rand(n_actions, n_states, n_states, device = self.device).to(dtype)
         self.Pi_x = torch.ones(n_states, dtype = dtype, device = self.device) / n_states
         self.Pi_a = torch.ones(n_actions, dtype = dtype, device = self.device) / n_actions
+        
+        # Validate initialized tensors
+        assert self.C.shape == (n_actions, n_states, n_states), f"C shape mismatch: expected ({n_actions}, {n_states}, {n_states}), got {self.C.shape}"
+        assert self.Pi_x.shape == (n_states,), f"Pi_x shape mismatch: expected ({n_states},), got {self.Pi_x.shape}"
+        assert self.Pi_a.shape == (n_actions,), f"Pi_a shape mismatch: expected ({n_actions},), got {self.Pi_a.shape}"
+        
         self.update_T()
 
         # ==== Print Summary ====
@@ -84,6 +124,20 @@ class CHMM_torch(object):
         Returns:
             torch.Tensor: scalar if reduce=True, else [T] vector of per-step -log2 likelihoods
         """
+        # Strict input validation
+        assert isinstance(x, torch.Tensor), f"x must be torch.Tensor, got {type(x)}"
+        assert isinstance(a, torch.Tensor), f"a must be torch.Tensor, got {type(a)}"
+        assert x.ndim == 1, f"x must be 1D, got {x.ndim}D"
+        assert a.ndim == 1, f"a must be 1D, got {a.ndim}D"
+        assert len(x) == len(a), f"sequence lengths must match: x={len(x)}, a={len(a)}"
+        assert len(x) > 0, "sequences cannot be empty"
+        assert isinstance(reduce, bool), f"reduce must be bool, got {type(reduce)}"
+        
+        # Validate model state
+        assert hasattr(self, 'T'), "model not initialized (missing T matrix)"
+        assert hasattr(self, 'n_clones'), "model not initialized (missing n_clones)"
+        assert hasattr(self, 'device'), "model not initialized (missing device)"
+        
         validate_seq(x, a, self.n_clones)
 
         x, a = x.to(self.device), a.to(self.device)
@@ -95,7 +149,22 @@ class CHMM_torch(object):
             x, a, self.device,
             store_messages = False
         )
-        return -log2_lik.sum() if reduce else -log2_lik
+        
+        # Validate forward pass results
+        assert isinstance(log2_lik, torch.Tensor), f"log2_lik must be tensor, got {type(log2_lik)}"
+        assert log2_lik.ndim == 1, f"log2_lik must be 1D, got {log2_lik.ndim}D"
+        assert len(log2_lik) == len(x), f"log2_lik length mismatch: expected {len(x)}, got {len(log2_lik)}"
+        
+        result = -log2_lik.sum() if reduce else -log2_lik
+        
+        # Final validation
+        if reduce:
+            assert result.ndim == 0, f"reduced result must be scalar, got {result.ndim}D"
+        else:
+            assert result.ndim == 1, f"unreduced result must be 1D, got {result.ndim}D"
+            assert len(result) == len(x), f"result length mismatch: expected {len(x)}, got {len(result)}"
+        
+        return result
     
     def bpsE(self, E, x, a, reduce = True):
         """
@@ -217,6 +286,25 @@ class CHMM_torch(object):
         Returns:
             list[float]: Convergence history of negative log2-likelihood per step (BPS)
         """
+        # Strict input validation
+        assert isinstance(x, torch.Tensor), f"x must be torch.Tensor, got {type(x)}"
+        assert isinstance(a, torch.Tensor), f"a must be torch.Tensor, got {type(a)}"
+        assert x.ndim == 1, f"x must be 1D, got {x.ndim}D"
+        assert a.ndim == 1, f"a must be 1D, got {a.ndim}D"
+        assert len(x) == len(a), f"sequence lengths must match: x={len(x)}, a={len(a)}"
+        assert len(x) > 0, "sequences cannot be empty"
+        
+        assert isinstance(n_iter, int), f"n_iter must be int, got {type(n_iter)}"
+        assert n_iter > 0, f"n_iter must be positive, got {n_iter}"
+        assert n_iter <= 10000, f"n_iter too large (max 10000), got {n_iter}"
+        
+        assert isinstance(term_early, bool), f"term_early must be bool, got {type(term_early)}"
+        
+        # Validate model state
+        assert hasattr(self, 'T'), "model not initialized (missing T matrix)"
+        assert hasattr(self, 'C'), "model not initialized (missing C matrix)"
+        assert hasattr(self, 'device'), "model not initialized (missing device)"
+        
         sys.stdout.flush()
         x, a = x.to(self.device), a.to(self.device)
         convergence = []
@@ -233,7 +321,14 @@ class CHMM_torch(object):
                 x, a,
                 store_messages=True
             )
+            
+            # Validate forward pass results
+            assert isinstance(log2_lik, torch.Tensor), f"log2_lik must be tensor, got {type(log2_lik)}"
+            assert isinstance(mess_fwd, torch.Tensor), f"mess_fwd must be tensor, got {type(mess_fwd)}"
+            
             mess_bwd = backward(self.T, self.n_clones, x, a, self.device)
+            assert isinstance(mess_bwd, torch.Tensor), f"mess_bwd must be tensor, got {type(mess_bwd)}"
+            
             updateC(self.C, self.T, self.n_clones, mess_fwd, mess_bwd, x, a, self.device)
 
             # === M-step: Normalize C into new T ===
@@ -241,13 +336,21 @@ class CHMM_torch(object):
 
             # === Convergence tracking ===
             bps = -log2_lik.mean()
-            convergence.append(bps)
+            assert isinstance(bps, torch.Tensor), f"bps must be tensor, got {type(bps)}"
+            assert bps.ndim == 0, f"bps must be scalar, got {bps.ndim}D"
+            
+            convergence.append(float(bps.item()))
             pbar.set_postfix(train_bps=bps.item())
 
             if bps >= -log2_lik_old and term_early:
                 break
             log2_lik_old = -bps
 
+        # Final validation
+        assert isinstance(convergence, list), f"convergence must be list, got {type(convergence)}"
+        assert len(convergence) > 0, "convergence history cannot be empty"
+        assert all(isinstance(x, (int, float)) for x in convergence), "all convergence values must be numeric"
+        
         return convergence
 
     def learn_viterbi_T(self, x, a, n_iter=100):
