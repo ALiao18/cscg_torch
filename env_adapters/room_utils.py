@@ -5,7 +5,6 @@ Helper functions for working with room-based environments and CHMM models.
 """
 
 import torch
-from .room_adapter import RoomTorchAdapter, RoomNPAdapter
 
 
 def create_room_adapter(room_data, adapter_type="torch", **kwargs):
@@ -20,6 +19,15 @@ def create_room_adapter(room_data, adapter_type="torch", **kwargs):
     Returns:
         CSCGEnvironmentAdapter: Configured room adapter
     """
+    # Dynamic import to avoid circular import issues
+    try:
+        from .room_adapter import RoomTorchAdapter, RoomNPAdapter
+    except ImportError:
+        try:
+            from room_adapter import RoomTorchAdapter, RoomNPAdapter
+        except ImportError:
+            raise ImportError("Could not import room adapters. Make sure room_adapter.py is available.")
+    
     if adapter_type == "torch":
         if not isinstance(room_data, torch.Tensor):
             room_data = torch.tensor(room_data)
@@ -63,7 +71,7 @@ def demo_room_setup():
     room_tensor[:, 0] = -1  # Left wall
     room_tensor[:, -1] = -1  # Right wall
     
-    # Create adapter
+    # Create adapter using dynamic import
     adapter = create_room_adapter(room_tensor)
     n_clones = get_room_n_clones(n_clones_per_obs=2)
     
