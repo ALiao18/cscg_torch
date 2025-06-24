@@ -143,7 +143,7 @@ class CHMM_torch(object):
         x, a = x.to(self.device), a.to(self.device)
 
         log2_lik, _ = forward(
-            self.T.transpose(0, 2, 1), 
+            self.T.permute(0, 2, 1), 
             self.Pi_x, 
             self.n_clones, 
             x, a, self.device,
@@ -184,7 +184,7 @@ class CHMM_torch(object):
         E = E.to(self.device, dtype = self.dtype)
 
         log2_lik, _ = forwardE(
-            self.T.transpose(0, 2, 1),
+            self.T.permute(0, 2, 1),
             E, 
             self.Pi_x,
             self.n_clones,
@@ -213,7 +213,7 @@ class CHMM_torch(object):
         x, a = x.to(self.device), a.to(self.device)
         
         log2_lik, _ = forward_mp(
-            self.T.transpose(0, 2, 1),
+            self.T.permute(0, 2, 1),
             self.Pi_x, 
             self.n_clones,
             x, a, self.device,
@@ -236,7 +236,7 @@ class CHMM_torch(object):
         """
         x, a = x.to(self.device), a.to(self.device)
         log2_lik, mess_fwd = forward_mp(
-            self.T.transpose(0, 2, 1),
+            self.T.permute(0, 2, 1),
             self.Pi_x,
             self.n_clones,
             x, a, self.device,
@@ -263,7 +263,7 @@ class CHMM_torch(object):
         E = E.to(self.device, dtype = self.dtype)
 
         log2_lik, mess_fwd = forwardE_mp(
-            self.T.transpose(0, 2, 1), 
+            self.T.permute(0, 2, 1), 
             E, 
             self.Pi_x,
             self.n_clones, 
@@ -315,10 +315,10 @@ class CHMM_torch(object):
         for it in pbar:
             # === E-step: Compute soft transition expectations ===
             log2_lik, mess_fwd = forward(
-                self.T.transpose(0, 2, 1),
+                self.T.permute(0, 2, 1),
                 self.Pi_x,
                 self.n_clones,
-                x, a,
+                x, a, self.device,
                 store_messages=True
             )
             
@@ -376,7 +376,7 @@ class CHMM_torch(object):
         for it in pbar:
             # === E-step: Most likely clone trajectory ===
             log2_lik, mess_fwd = forward_mp(
-                self.T.transpose(0, 2, 1),
+                self.T.permute(0, 2, 1),
                 self.Pi_x,
                 self.n_clones,
                 x, a,
@@ -445,7 +445,7 @@ class CHMM_torch(object):
         for it in pbar:
             # === E-step: Compute expected clone-observation alignment ===
             log2_lik, mess_fwd = forwardE(
-                T_tr=self.T.transpose(0, 2, 1),
+                T_tr=self.T.permute(0, 2, 1),
                 E=E,
                 Pi=self.Pi_x,
                 n_clones=self.n_clones,
@@ -561,7 +561,7 @@ class CHMM_torch(object):
         Pi_x[state1] = 1.0
 
         log2_lik, mess_fwd = forward_mp_all(
-            self.T.transpose(0, 2, 1),
+            self.T.permute(0, 2, 1),
             Pi_x,
             self.Pi_a,
             self.n_clones,
