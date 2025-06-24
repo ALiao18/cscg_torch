@@ -33,6 +33,7 @@ def setup_colab_imports():
         def __init__(self, room_tensor, no_up=[], no_down=[], no_left=[], no_right=[], start_pos=None, seed=42):
             super().__init__(seed=seed)
             # Parent class already sets self.device, so we can use it directly
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             self.room = room_tensor.to(self.device)
             self.h, self.w = self.room.shape
             self.start_pos = start_pos
