@@ -31,8 +31,9 @@ class CSCGEnvironmentAdapter:
             action = self.rng.choice(self.n_actions)
             new_obs, valid = self.step(action)
             if valid:
-                x_seq.append(obs)
-                a_seq.append(action)
+                # Ensure obs and action are Python integers
+                x_seq.append(int(obs))
+                a_seq.append(int(action))
         # Return PyTorch tensors on the correct device (GPU-compatible)
         x_tensor = torch.tensor(x_seq, dtype=torch.int64, device=self.device)
         a_tensor = torch.tensor(a_seq, dtype=torch.int64, device=self.device)
@@ -95,12 +96,12 @@ class RoomTorchAdapter(CSCGEnvironmentAdapter):
     
     def get_observation(self):
         r, c = self.pos
-        up = self.room[r - 1, c] != -1 if r > 0 else 0
-        down = self.room[r + 1, c] != -1 if r < self.h - 1 else 0
-        left = self.room[r, c - 1] != -1 if c > 0 else 0
-        right = self.room[r, c + 1] != -1 if c < self.w - 1 else 0
+        up = int(self.room[r - 1, c] != -1) if r > 0 else 0
+        down = int(self.room[r + 1, c] != -1) if r < self.h - 1 else 0
+        left = int(self.room[r, c - 1] != -1) if c > 0 else 0
+        right = int(self.room[r, c + 1] != -1) if c < self.w - 1 else 0
         obs = (up << 3) + (down << 2) + (left << 1) + right
-        return obs
+        return obs  # Returns Python int, not tensor
 
 # Import CHMM model
 try:
