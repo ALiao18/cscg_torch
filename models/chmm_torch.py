@@ -39,7 +39,7 @@ class CHMM_torch(object):
         self.update_T()
 
         # ==== Print Summary ====
-        print("Average number of clones:", n_clones.mean())
+        print("Average number of clones:", n_clones.float().mean().item())
         print("C device:", self.C.device) # ensures tensors are on the correct device
         print("Pi_x device:", self.Pi_x.device)
         

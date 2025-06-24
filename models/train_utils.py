@@ -16,7 +16,7 @@ def validate_seq(x, a, n_clones = None):
     if n_clones is not None:
         assert len(n_clones.shape) == 1, "Flatten your array first"
         assert n_clones.dtype == torch.int64, "n_clones must be discrete int"
-        assert torch.all([n_clones > 0]), "You can't provide zero clones for any emission"
+        assert torch.all(n_clones > 0), "You can't provide zero clones for any emission"
         n_emissions = n_clones.shape[0]
         assert x.max().item() < n_emissions, "Number of emissions inconsistent with training sequence"
 

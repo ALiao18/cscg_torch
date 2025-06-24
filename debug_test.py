@@ -2,25 +2,26 @@
 Debug test for colab imports
 """
 
+import torch
+import numpy as np
+
 def debug_test():
     print("=== Debugging Colab Imports ===")
-    
-    import torch
-    import numpy as np
     
     print(f"1. Basic imports successful")
     
     # Test import
     try:
-        from colab_imports import setup_colab_imports
-        print("2. ✓ setup_colab_imports imported")
+        from colab_imports_fixed import (
+            CSCGEnvironmentAdapter, RoomTorchAdapter, 
+            create_room_adapter, get_room_n_clones, CHMM_torch
+        )
+        print("2. ✓ colab_imports_fixed imported")
         
-        cscg = setup_colab_imports()
-        print("3. ✓ CSCG namespace created")
+        print("3. ✓ Functions available")
         
         # Test base adapter directly
         try:
-            from colab_imports import CSCGEnvironmentAdapter
             base = CSCGEnvironmentAdapter()
             print(f"4. ✓ Base adapter created, device: {base.device}")
         except Exception as e:
@@ -33,7 +34,7 @@ def debug_test():
         # Test adapter creation step by step
         print("6. Testing RoomTorchAdapter creation...")
         try:
-            env = cscg.RoomTorchAdapter(room_tensor)
+            env = RoomTorchAdapter(room_tensor)
             print(f"   ✓ RoomTorchAdapter created successfully!")
             print(f"   ✓ Device: {env.device}")
             print(f"   ✓ Room shape: {env.room.shape}")
@@ -45,7 +46,7 @@ def debug_test():
         # Test create_room_adapter function
         print("7. Testing create_room_adapter function...")
         try:
-            env2 = cscg.create_room_adapter(room_tensor)
+            env2 = create_room_adapter(room_tensor)
             print(f"   ✓ create_room_adapter successful!")
             print(f"   ✓ Device: {env2.device}")
         except Exception as e:
