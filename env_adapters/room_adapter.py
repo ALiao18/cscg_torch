@@ -72,7 +72,8 @@ class RoomNPAdapter(CSCGEnvironmentAdapter):
 class RoomTorchAdapter(CSCGEnvironmentAdapter):
     def __init__(self, room_tensor, no_up=[], no_down=[], no_left=[], no_right=[], start_pos=None, seed=42):
         super().__init__(seed=seed)
-        self.room = room_tensor
+        # Ensure room tensor is on the correct device
+        self.room = room_tensor.to(self.device)
         self.h, self.w = self.room.shape
         self.start_pos = start_pos
         self.no_up = set(no_up)
