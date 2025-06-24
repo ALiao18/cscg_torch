@@ -121,7 +121,7 @@ class RoomTorchAdapter(CSCGEnvironmentAdapter):
 
     def get_observation(self):
         r, c = self.pos
-        # You can later switch this to a learned embedding
+        # can later switch this to a learned embedding
         up    = self.room[r - 1, c] != -1 if r > 0     else 0
         down  = self.room[r + 1, c] != -1 if r < self.h - 1 else 0
         left  = self.room[r, c - 1] != -1 if c > 0     else 0
