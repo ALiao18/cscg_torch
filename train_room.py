@@ -64,8 +64,7 @@ def main():
         method='em_T',
         n_iter=100,
         pseudocount=0.01,
-        early_stopping=True,
-        patience=10
+        early_stopping=True
     )
     
     # Evaluate
