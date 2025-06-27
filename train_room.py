@@ -38,12 +38,8 @@ def main():
         [ 4, 12, 14,  2, 11,  7,  5, 10,  0,  2,  1, 13,  5, 14,  8,  6,  6,  0, 15, 13]
     ])
     
-    # Add walls around the room (adapter expects -1 for walls)
-    room_with_walls = np.full((22, 22), -1, dtype=np.int64)  # Add 2x2 border
-    room_with_walls[1:-1, 1:-1] = room_data  # Place room data in center
-    
-    # Convert to tensor on correct device
-    room_tensor = torch.tensor(room_with_walls, device=device, dtype=torch.int64)
+    # Convert room data to tensor on correct device
+    room_tensor = torch.tensor(room_data, device=device, dtype=torch.int64)
     adapter = create_room_adapter(room_tensor, adapter_type="torch", seed=42)
     print(f"Room shape: {room_data.shape}")
     

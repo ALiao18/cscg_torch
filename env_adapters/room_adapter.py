@@ -176,8 +176,8 @@ class RoomTorchAdapter(CSCGEnvironmentAdapter):
         super().__init__(seed=seed)
         
         # Ensure room tensor is on the correct device
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.room = room_tensor.to(self.device)
+        self.room = room_tensor
+        self.device = self.room.device
         self.h, self.w = int(self.room.shape[0]), int(self.room.shape[1])
         
         # Validate dimensions
