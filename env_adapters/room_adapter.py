@@ -1,7 +1,9 @@
 # env_adapters/room_adapter.py
 import numpy as np
 import torch
+import matplotlib.pyplot as plt
 from .base_adapter import CSCGEnvironmentAdapter
+import os
 
 ACTIONS = {
     0: (-1, 0),  # up
@@ -325,3 +327,94 @@ class RoomTorchAdapter(CSCGEnvironmentAdapter):
         assert 0 <= obs <= 15, f"obs {obs} out of range [0, 15]"
         
         return obs
+    
+def save_room_plot(room, save_path_base, cmap='viridis', title=None, show_grid=True, 
+                  save_formats=['pdf', 'png'], figsize=(10, 8)):
+    """
+    Save room plot with enhanced visualization options.
+    
+    Args:
+        room (array-like): Room layout data
+        save_path_base (str): Base path for saving (without extension)
+        cmap (str or colormap): Colormap to use for plotting
+        title (str, optional): Custom title for the plot
+        show_grid (bool): Whether to show grid lines
+        save_formats (list): List of formats to save ['pdf', 'png', 'svg']
+        figsize (tuple): Figure size as (width, height)
+    """
+    # Input validation
+    assert room is not None, "room cannot be None"
+    assert isinstance(save_path_base, str), f"save_path_base must be str, got {type(save_path_base)}"
+    assert len(save_path_base) > 0, "save_path_base cannot be empty"
+    assert isinstance(save_formats, (list, tuple)), f"save_formats must be list/tuple, got {type(save_formats)}"
+    
+    # Convert to numpy if needed
+    if isinstance(room, torch.Tensor):
+        if room.is_cuda:
+            room = room.cpu()
+        room = room.numpy()
+    
+    room = np.asarray(room)
+    assert room.ndim == 2, f"room must be 2D, got {room.ndim}D"
+    assert room.shape[0] > 0 and room.shape[1] > 0, f"room must have positive dimensions, got {room.shape}"
+    
+    # Create enhanced plot
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # Determine appropriate colormap based on data
+    unique_vals = np.unique(room)
+    if len(unique_vals) <= 10:
+        # Use discrete colormap for few unique values
+        im = ax.imshow(room, cmap=cmap, interpolation='nearest')
+    else:
+        # Use continuous colormap for many values
+        im = ax.imshow(room, cmap=cmap)
+    
+    # Enhanced colorbar
+    cbar = fig.colorbar(im, ax=ax, shrink=0.8)
+    if -1 in unique_vals and len(unique_vals) <= 5:
+        # Likely a maze with walls (-1) and rooms
+        cbar.set_label('Cell Type (-1: Wall, ≥0: Room)', rotation=270, labelpad=15)
+    else:
+        cbar.set_label('Room Value', rotation=270, labelpad=15)
+    
+    # Set title
+    if title is None:
+        title = f"Room Layout ({room.shape[0]}×{room.shape[1]})"
+    ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
+    
+    # Axis labels
+    ax.set_xlabel("Column Index", fontsize=12)
+    ax.set_ylabel("Row Index", fontsize=12)
+    
+    # Grid options
+    if show_grid:
+        ax.grid(True, alpha=0.3, linewidth=0.5, color='white')
+        
+    # Add room statistics as text
+    stats_text = f"Size: {room.shape[0]}×{room.shape[1]}\nUnique values: {len(unique_vals)}"
+    if -1 in unique_vals:
+        n_walls = np.sum(room == -1)
+        n_free = room.size - n_walls
+        stats_text += f"\nWalls: {n_walls}\nFree: {n_free}"
+    
+    ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
+           verticalalignment='top', fontsize=10,
+           bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    plt.tight_layout()
+    
+    # Save in specified formats
+    saved_files = []
+    for fmt in save_formats:
+        if fmt.lower() in ['pdf', 'png', 'svg', 'eps']:
+            save_path = f"{save_path_base}.{fmt.lower()}"
+            plt.savefig(save_path, bbox_inches='tight', dpi=300)
+            saved_files.append(save_path)
+    
+    plt.close()
+    
+    if saved_files:
+        print(f"Room plot saved to: {', '.join(saved_files)}")
+    else:
+        print("Warning: No valid save formats specified")

@@ -6,6 +6,9 @@ Helper functions for working with room-based environments and CHMM models.
 
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+
 
 def create_room_adapter(room_data, adapter_type="torch", **kwargs):
     """
@@ -164,3 +167,148 @@ def demo_room_setup():
     sample_data = (x_seq, a_seq)
     
     return adapter, n_clones, sample_data
+
+
+def get_obs_colormap(n_obs):
+    """
+    Get a colormap for observations.
+    
+    Args:
+        n_obs (int): Number of observation types
+        
+    Returns:
+        matplotlib colormap
+    """
+    assert isinstance(n_obs, int), f"n_obs must be int, got {type(n_obs)}"
+    assert n_obs > 0, f"n_obs must be positive, got {n_obs}"
+    assert n_obs <= 100, f"n_obs too large (max 100), got {n_obs}"
+    
+    cmap = cm.get_cmap('tab20', n_obs)
+    return cmap
+
+
+def clone_to_obs_map(n_clones):
+    """
+    Create mapping from clone indices to observation indices.
+    
+    Args:
+        n_clones (array-like): Number of clones per observation
+        
+    Returns:
+        dict: Mapping from clone index to observation index
+    """
+    # Convert to numpy if needed for consistent handling
+    if isinstance(n_clones, torch.Tensor):
+        n_clones = n_clones.cpu().numpy()
+    
+    assert isinstance(n_clones, (np.ndarray, list, tuple)), f"n_clones must be array-like, got {type(n_clones)}"
+    n_clones = np.asarray(n_clones)
+    assert n_clones.ndim == 1, f"n_clones must be 1D, got {n_clones.ndim}D"
+    assert len(n_clones) > 0, "n_clones cannot be empty"
+    assert np.all(n_clones > 0), "all n_clones values must be positive"
+    
+    mapping = {}
+    idx = 0
+    for obs_id, n in enumerate(n_clones):
+        for _ in range(int(n)):
+            mapping[idx] = obs_id
+            idx += 1
+    
+    # Validate mapping
+    assert len(mapping) == np.sum(n_clones), f"mapping length mismatch: {len(mapping)} != {np.sum(n_clones)}"
+    assert all(isinstance(k, int) and isinstance(v, int) for k, v in mapping.items()), "mapping must have int keys and values"
+    
+    return mapping
+
+
+def top_k_used_clones(states, k):
+    """
+    Get top k most frequently used clones.
+    
+    Args:
+        states (array-like): State sequence
+        k (int): Number of top clones to return
+        
+    Returns:
+        list: List of (clone_id, count) tuples sorted by frequency
+    """
+    assert isinstance(k, int), f"k must be int, got {type(k)}"
+    assert k > 0, f"k must be positive, got {k}"
+    
+    # Convert to numpy if needed
+    if isinstance(states, torch.Tensor):
+        states = states.cpu().numpy()
+    
+    assert isinstance(states, (np.ndarray, list, tuple)), f"states must be array-like, got {type(states)}"
+    states = np.asarray(states)
+    assert states.ndim == 1, f"states must be 1D, got {states.ndim}D"
+    assert len(states) > 0, "states cannot be empty"
+    
+    unique, counts = np.unique(states, return_counts=True)
+    freq_dict = dict(zip(unique, counts))
+    
+    # Validate frequency dict
+    assert len(freq_dict) > 0, "freq_dict cannot be empty"
+    assert all(isinstance(k, (int, np.integer)) and isinstance(v, (int, np.integer)) for k, v in freq_dict.items()), "freq_dict must have int keys and values"
+    
+    result = sorted(freq_dict.items(), key=lambda item: item[1], reverse=True)[:k]
+    
+    # Validate result
+    assert len(result) <= k, f"result length {len(result)} exceeds k {k}"
+    assert len(result) <= len(freq_dict), f"result length {len(result)} exceeds unique states {len(freq_dict)}"
+    
+    return result
+
+
+def count_used_clones(chmm, x, a):
+    """
+    Count number of unique clones used per observation type.
+    
+    Args:
+        chmm: CHMM model
+        x (array-like): Observation sequence
+        a (array-like): Action sequence
+        
+    Returns:
+        dict: Mapping from observation_id to number of unique clones used
+    """
+    # Validate inputs
+    assert hasattr(chmm, 'decode'), "chmm must have decode method"
+    assert hasattr(chmm, 'n_clones'), "chmm must have n_clones attribute"
+    
+    # Convert sequences to appropriate format for decoding
+    if isinstance(x, np.ndarray):
+        x = torch.from_numpy(x)
+    if isinstance(a, np.ndarray):
+        a = torch.from_numpy(a)
+    
+    # Decode to get state sequence
+    _, states = chmm.decode(x, a)
+    
+    # Convert to numpy for processing
+    if isinstance(states, torch.Tensor):
+        states = states.cpu().numpy()
+    
+    used_clones = np.unique(states)
+    
+    # Get clone ranges for each observation type
+    if isinstance(chmm.n_clones, torch.Tensor):
+        n_clones = chmm.n_clones.cpu().numpy()
+    else:
+        n_clones = np.asarray(chmm.n_clones)
+    
+    clone_ranges = np.cumsum(np.concatenate([[0], n_clones]))
+    counts = {}
+
+    for obs_id in range(len(n_clones)):
+        start = clone_ranges[obs_id]
+        end = clone_ranges[obs_id + 1]
+        clones_in_use = [s for s in used_clones if start <= s < end]
+        counts[obs_id] = len(clones_in_use)
+
+    # Validate counts
+    assert len(counts) == len(n_clones), f"counts length {len(counts)} != n_clones length {len(n_clones)}"
+    assert all(isinstance(k, int) and isinstance(v, int) for k, v in counts.items()), "counts must have int keys and values"
+    assert all(v >= 0 for v in counts.values()), "all counts must be non-negative"
+
+    return counts

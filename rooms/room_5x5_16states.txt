@@ -1,0 +1,13 @@
+Room Layout: 5x5 with 16 states
+==================================================
+
+Legend:
+  -1: Wall
+  0-15: Free cells with different observation states
+
+Room Layout:
+Row  0: ## ## ## ## ## 
+Row  1: ##  0  7 11 ## 
+Row  2: ##  7 13  1 ## 
+Row  3: ## 10 ## 11 ## 
+Row  4: ## ## ## ## ## 

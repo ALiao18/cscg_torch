@@ -659,3 +659,323 @@ def backtrace_all(T, Pi_a, n_clones, mess_fwd, target_state, device):
 
     return actions, states
 
+def train_chmm(n_clones, x, a, device=None, method='em_T', n_iter=50, pseudocount=0.01, seed=42, 
+               learn_E=False, viterbi=False, early_stopping=True, min_improvement=1e-6):
+    """
+    Train a CHMM using the CHMM_torch class methods with progression tracking.
+    
+    Args:
+        n_clones (Tensor): [n_obs] Number of clones per observation
+        x (Tensor): [T] Observation sequence
+        a (Tensor): [T] Action sequence
+        device (torch.device, optional): GPU or CPU device (auto-detected if None)
+        method (str): Training method - 'em_T', 'viterbi_T', or 'em_E'
+        n_iter (int): Number of EM iterations
+        pseudocount (float): Pseudocount for smoothing
+        seed (int): Random seed
+        learn_E (bool): Whether to also learn emission matrix E
+        viterbi (bool): Whether to use Viterbi (hard) EM instead of soft EM
+        early_stopping (bool): Whether to use early stopping
+        min_improvement (float): Minimum improvement threshold for early stopping
+        
+    Returns:
+        tuple: (trained_model, progression_list)
+            - trained_model: CHMM_torch instance with trained parameters
+            - progression_list: List of BPS values showing training progression
+    """
+    # Import CHMM_torch here to avoid circular imports
+    from .chmm_torch import CHMM_torch
+    
+    # Input validation
+    assert isinstance(n_clones, torch.Tensor), "n_clones must be a tensor"
+    assert isinstance(x, torch.Tensor), "x must be a tensor" 
+    assert isinstance(a, torch.Tensor), "a must be a tensor"
+    assert n_clones.ndim == 1, f"n_clones must be 1D, got {n_clones.ndim}D"
+    assert x.ndim == 1, f"x must be 1D, got {x.ndim}D"
+    assert a.ndim == 1, f"a must be 1D, got {a.ndim}D"
+    assert len(x) == len(a), f"x and a must have same length: {len(x)} != {len(a)}"
+    assert method in ['em_T', 'viterbi_T', 'em_E'], f"method must be 'em_T', 'viterbi_T', or 'em_E', got {method}"
+    
+    # Auto-detect device if not provided
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Move tensors to device
+    n_clones = n_clones.to(device)
+    x = x.to(device)
+    a = a.to(device)
+    
+    # Set random seed for reproducibility
+    torch.manual_seed(seed)
+    if device.type == 'cuda':
+        torch.cuda.manual_seed(seed)
+    
+    # Initialize CHMM model
+    print(f"Initializing CHMM with {n_clones.sum().item()} states on {device}")
+    model = CHMM_torch(
+        n_clones=n_clones,
+        x=x, 
+        a=a,
+        pseudocount=pseudocount,
+        seed=seed
+    )
+    
+    print(f"Starting {method} training for {n_iter} iterations...")
+    
+    # Choose training method and run
+    if method == 'em_T' or (not viterbi and not learn_E):
+        # Standard soft EM for transition matrices
+        progression = model.learn_em_T(
+            x=x,
+            a=a, 
+            n_iter=n_iter,
+            term_early=early_stopping,
+            min_improvement=min_improvement
+        )
+        
+    elif method == 'viterbi_T' or viterbi:
+        # Hard EM (Viterbi) for transition matrices
+        progression = model.learn_viterbi_T(
+            x=x,
+            a=a,
+            n_iter=n_iter
+        )
+        
+    elif method == 'em_E' or learn_E:
+        # EM for emission matrices (keeps T fixed)
+        progression, learned_E = model.learn_em_E(
+            x=x,
+            a=a,
+            n_iter=n_iter,
+            pseudocount_extra=pseudocount
+        )
+        print(f"Learned emission matrix E with shape {learned_E.shape}")
+        
+    else:
+        raise ValueError(f"Unknown training configuration: method={method}, viterbi={viterbi}, learn_E={learn_E}")
+    
+    # If learning both T and E sequentially
+    if learn_E and method != 'em_E':
+        print("Also learning emission matrix E...")
+        e_progression, learned_E = model.learn_em_E(
+            x=x,
+            a=a, 
+            n_iter=n_iter//2,  # Use fewer iterations for E step
+            pseudocount_extra=pseudocount
+        )
+        # Combine progressions
+        progression.extend(e_progression)
+        print(f"Final emission matrix E shape: {learned_E.shape}")
+    
+    print(f"Training completed. Final BPS: {progression[-1]:.4f}")
+    print(f"Total improvement: {progression[0] - progression[-1]:.4f}")
+    
+    return model, progression
+
+
+def make_E(n_clones, device=None):
+    """
+    Create emission matrix mapping clones to observations.
+    
+    Args:
+        n_clones (Tensor): [n_obs] Number of clones per observation
+        device (torch.device, optional): Device for tensor
+        
+    Returns:
+        Tensor: [total_clones, n_obs] Emission matrix
+    """
+    if device is None:
+        device = n_clones.device if isinstance(n_clones, torch.Tensor) else torch.device('cpu')
+    
+    # Convert to tensor if needed
+    if not isinstance(n_clones, torch.Tensor):
+        n_clones = torch.tensor(n_clones, device=device)
+    else:
+        n_clones = n_clones.to(device)
+    
+    # Validate input
+    assert n_clones.ndim == 1, f"n_clones must be 1D, got {n_clones.ndim}D"
+    assert torch.all(n_clones > 0), "all n_clones must be positive"
+    
+    total_clones = n_clones.sum().item()
+    n_obs = len(n_clones)
+    
+    E = torch.zeros((total_clones, n_obs), device=device, dtype=torch.float32)
+    
+    idx = 0
+    for obs_id, n in enumerate(n_clones):
+        n = n.item()
+        E[idx:idx+n, obs_id] = 1.0
+        idx += n
+    
+    # Validate output
+    assert E.shape == (total_clones, n_obs), f"E shape mismatch: {E.shape} != ({total_clones}, {n_obs})"
+    assert torch.allclose(E.sum(dim=1), torch.ones(total_clones, device=device)), "E rows must sum to 1"
+    
+    return E
+
+
+def make_E_sparse(n_clones, device=None):
+    """
+    Create sparse emission matrix mapping clones to observations.
+    
+    Args:
+        n_clones (Tensor): [n_obs] Number of clones per observation
+        device (torch.device, optional): Device for tensor
+        
+    Returns:
+        torch.sparse.FloatTensor: [total_clones, n_obs] Sparse emission matrix
+    """
+    if device is None:
+        device = n_clones.device if isinstance(n_clones, torch.Tensor) else torch.device('cpu')
+    
+    # Convert to tensor if needed
+    if not isinstance(n_clones, torch.Tensor):
+        n_clones = torch.tensor(n_clones, device=device)
+    else:
+        n_clones = n_clones.to(device)
+    
+    # Validate input
+    assert n_clones.ndim == 1, f"n_clones must be 1D, got {n_clones.ndim}D"
+    assert torch.all(n_clones > 0), "all n_clones must be positive"
+    
+    total_clones = n_clones.sum().item()
+    n_obs = len(n_clones)
+    
+    # Build sparse indices and values
+    indices = []
+    values = []
+    
+    idx = 0
+    for obs_id, n in enumerate(n_clones):
+        n = n.item()
+        for j in range(n):
+            indices.append([idx, obs_id])
+            values.append(1.0)
+            idx += 1
+    
+    # Convert to tensors
+    indices = torch.tensor(indices, device=device).t()
+    values = torch.tensor(values, device=device)
+    
+    # Create sparse tensor
+    E_sparse = torch.sparse_coo_tensor(
+        indices, values, (total_clones, n_obs), device=device
+    ).coalesce()
+    
+    # Validate output
+    assert E_sparse.shape == (total_clones, n_obs), f"E_sparse shape mismatch: {E_sparse.shape} != ({total_clones}, {n_obs})"
+    
+    return E_sparse
+
+
+def compute_forward_messages(chmm_state, x, a, device, pseudocount_E=1e-10):
+    """
+    Compute forward messages for a CHMM.
+    
+    Args:
+        chmm_state (dict): CHMM state dictionary with T, E, Pi_x, n_clones
+        x (Tensor): [T] Observation sequence
+        a (Tensor): [T] Action sequence  
+        device (torch.device): GPU or CPU device
+        pseudocount_E (float): Pseudocount for emission smoothing
+        
+    Returns:
+        Tensor: [T, n_states] Forward messages
+    """
+    # Validate inputs
+    assert isinstance(chmm_state, dict), f"chmm_state must be dict, got {type(chmm_state)}"
+    required_keys = ['T', 'E', 'Pi_x', 'n_clones']
+    for key in required_keys:
+        assert key in chmm_state, f"chmm_state missing key: {key}"
+    
+    # Extract parameters and ensure they're on the correct device
+    T = chmm_state['T'].to(device)
+    E = chmm_state['E'].to(device) 
+    Pi_x = chmm_state['Pi_x'].to(device)
+    n_clones = chmm_state['n_clones'].to(device)
+    
+    # Move sequences to device
+    x, a = x.to(device), a.to(device)
+    
+    # Validate tensor shapes
+    assert T.ndim == 3, f"T must be 3D [n_actions, n_states, n_states], got {T.ndim}D"
+    assert E.ndim == 2, f"E must be 2D [n_states, n_obs], got {E.ndim}D"
+    assert Pi_x.ndim == 1, f"Pi_x must be 1D [n_states], got {Pi_x.ndim}D"
+    
+    # Apply pseudocount smoothing to emissions
+    E_smooth = E + pseudocount_E
+    E_smooth = E_smooth / E_smooth.sum(dim=1, keepdim=True).clamp(min=1e-10)
+    
+    # Compute forward messages with correct transpose
+    _, mess_fwd = forwardE(
+        T.transpose(1, 2), E_smooth, Pi_x, 
+        n_clones, x, a, device, store_messages=True
+    )
+    
+    # Validate output
+    assert mess_fwd.device == device, f"Output device mismatch: {mess_fwd.device} != {device}"
+    assert mess_fwd.shape[0] == len(x), f"Time dimension mismatch: {mess_fwd.shape[0]} != {len(x)}"
+    
+    return mess_fwd
+
+
+def place_field(mess_fwd, rc, clone, device=None):
+    """
+    Compute place field for a given clone using GPU-optimized operations.
+    
+    Args:
+        mess_fwd (Tensor): [T, n_states] Forward messages
+        rc (Tensor): [T, 2] Row-column positions
+        clone (int): Clone index
+        device (torch.device, optional): GPU or CPU device
+        
+    Returns:
+        Tensor: [max_r+1, max_c+1] Place field matrix
+    """
+    if device is None:
+        device = mess_fwd.device
+    
+    # Move to device efficiently
+    if mess_fwd.device != device:
+        mess_fwd = mess_fwd.to(device)
+    if rc.device != device:
+        rc = rc.to(device)
+    
+    # Validate inputs
+    assert mess_fwd.ndim == 2, f"mess_fwd must be 2D, got {mess_fwd.ndim}D"
+    assert rc.ndim == 2 and rc.shape[1] == 2, f"rc must be [T, 2], got {rc.shape}"
+    assert mess_fwd.shape[0] == rc.shape[0], f"sequence length mismatch: {mess_fwd.shape[0]} != {rc.shape[0]}"
+    assert isinstance(clone, int), f"clone must be int, got {type(clone)}"
+    assert 0 <= clone < mess_fwd.shape[1], f"clone {clone} out of range [0, {mess_fwd.shape[1]})"
+    
+    # Get field dimensions
+    max_r, max_c = rc.max(dim=0)[0]
+    field_shape = (max_r.item() + 1, max_c.item() + 1)
+    
+    # Initialize field and count matrices
+    field = torch.zeros(field_shape, device=device, dtype=mess_fwd.dtype)
+    count = torch.zeros(field_shape, device=device, dtype=torch.int64)
+    
+    # GPU-optimized accumulation using scatter_add for better performance
+    flat_indices = rc[:, 0] * field_shape[1] + rc[:, 1]  # Convert 2D indices to 1D
+    
+    # Flatten field matrices for scatter operations
+    field_flat = field.flatten()
+    count_flat = count.flatten()
+    
+    # Accumulate using scatter_add (GPU optimized)
+    field_flat.scatter_add_(0, flat_indices, mess_fwd[:, clone])
+    count_flat.scatter_add_(0, flat_indices, torch.ones_like(flat_indices, dtype=torch.int64))
+    
+    # Reshape back to 2D
+    field = field_flat.view(field_shape)
+    count = count_flat.view(field_shape)
+    
+    # Avoid division by zero
+    count = count.clamp(min=1)
+    
+    # Normalize by visit counts
+    field = field / count.float()
+    
+    return field

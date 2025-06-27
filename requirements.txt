@@ -1,20 +1,52 @@
-# === Core Scientific Libraries ===
-numpy>=1.24
-scipy>=1.10
-matplotlib>=3.7
-numba>=0.57
-tqdm>=4.65
+# CSCG Torch Requirements
+# GPU-optimized Clone-Structured Cognitive Graphs implementation
 
-# === ML / Torch ===
+# === Core Dependencies ===
+numpy>=1.24.0
 torch>=2.1.0
+tqdm>=4.65.0
 
-# === Jupyter Ecosystem ===
-jupyter>=1.0
-jupytext>=1.15
+# === Scientific Computing ===
+scipy>=1.10.0
+matplotlib>=3.7.0
 
-# === Optional: For YAML Configs ===
-PyYAML>=6.0
+# === Performance & Acceleration ===
+numba>=0.57.0
 
-# === Logging & Experiment Tools (Optional, uncomment if needed) ===
-#rich>=13.0
-#tensorboard>=2.14
+# === Development & Notebooks ===
+jupyter>=1.0.0
+jupytext>=1.15.0
+
+# === Configuration ===
+PyYAML>=6.0.0
+
+# === Plotting & Visualization ===
+# Required for place field plots and performance visualization
+plotly>=5.0.0
+seaborn>=0.12.0
+
+# === Graph Visualization ===
+# Optional: for CSCG graph plotting (install with: pip install python-igraph)
+# python-igraph>=0.10.0
+
+# === Optional: Rich Output & Logging ===
+# Uncomment if you want enhanced terminal output
+# rich>=13.0.0
+
+# === Optional: Experiment Tracking ===
+# Uncomment if you want TensorBoard logging
+# tensorboard>=2.14.0
+
+# === Development Tools (Optional) ===
+# Uncomment for development environment
+# pytest>=7.0.0
+# pytest-cov>=4.0.0
+# black>=23.0.0
+# flake8>=6.0.0
+# mypy>=1.0.0
+
+# === GPU Optimization Notes ===
+# For CUDA support, ensure you have:
+# - CUDA Toolkit 11.8+ or 12.x
+# - cuDNN compatible with your CUDA version
+# - PyTorch with CUDA support: pip install torch --index-url https://download.pytorch.org/whl/cu118

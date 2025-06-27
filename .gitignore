@@ -1,29 +1,267 @@
-# Ignore macOS system files
-.DS_Store
+# CSCG Torch Project .gitignore
 
-# Ignore Python bytecode
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
+*$py.class
 
-# Ignore virtual environments
-.venv/
+# C extensions
+*.so
 
-# Ignore Jupyter Notebook checkpoints
-.ipynb_checkpoints/
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# Ignore logs
+# PyInstaller
+#  Usually these files are written by a python script from a template
+#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
 *.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
 
-# Ignore temporary files
-*.tmp
-*.temp
+# Flask stuff:
+instance/
+.webassets-cache
 
-# Ignore compiled Python files
-*.pyo
+# Scrapy stuff:
+.scrapy
 
-# Ignore other unnecessary files
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
+#   However, in case of collaboration, if having platform-specific dependencies or dependencies
+#   having no cross-platform support, pipenv may install dependencies that don't work, or not
+#   install all needed dependencies.
+#Pipfile.lock
+
+# PEP 582; used by e.g. github.com/David-OConnor/pyflow
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+cscg_env/
+cscg_torch_env/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# PyTorch specific
+*.pth
+*.pt
+*.ckpt
+checkpoints/
+lightning_logs/
+wandb/
+
+# CUDA compilation
+*.cu.o
+*.cu.obj
+
+# Data and model files
+data/
+datasets/
+models/*.pt
+models/*.pth
+weights/
+*.h5
+*.hdf5
+
+# Experiment outputs
+experiments/
+results/
+outputs/
+logs/
+runs/
+
+# IDE specific files
+.vscode/
+.idea/
 *.swp
 *.swo
+*~
 
-# Ignore Git files
-.git/ 
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Backup files
+*.bak
+*.backup
+
+# Test artifacts
+test_results/
+test_outputs/
+test_data/
+*.test
+
+# Documentation builds
+docs/build/
+docs/_build/
+*.pdf
+
+# Profiling data
+*.prof
+*.profile
+
+# Memory dumps
+*.mem
+
+# CSCG specific ignores
+# Large room files (keep smaller ones for testing)
+rooms/room_100x100_*.pt
+rooms/room_100x100_*.npy
+rooms/large_rooms/
+
+# Training outputs
+training_logs/
+convergence_plots/
+model_checkpoints/
+
+# Benchmark results
+benchmarks/
+performance_logs/
+
+# GPU profiling
+*.nvprof
+*.nvvp
+
+# Colab specific
+.colab_config
+colab_*.py
+
+# Custom configuration files
+config/local_*.yaml
+config/personal_*.json
+
+# Secret files
+secrets/
+keys/
+*.key
+*.secret
+
+# Large datasets
+*.zanj
+large_datasets/
+
+# Maze dataset specific (if using the included maze-dataset)
+maze-dataset/venv/
+maze-dataset/__pycache__/
+maze-dataset/dist/
+maze-dataset/build/
+
+# Keep these files
+!requirements.txt
+!setup.py
+!rooms/room_5x5_*.pt
+!rooms/room_5x5_*.npy
+!rooms/room_10x10_*.pt
+!rooms/room_10x10_*.npy
+!rooms/room_20x20_*.pt
+!rooms/room_20x20_*.npy
+!rooms/room_50x50_*.pt
+!rooms/room_50x50_*.npy
+!rooms/README.md
+!rooms/*.txt
