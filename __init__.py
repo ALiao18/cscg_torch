@@ -119,13 +119,13 @@ def _print_system_info():
         if torch.cuda.is_available():
             gpu_name = torch.cuda.get_device_properties(0).name
             gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-            print(f"🚀 CSCG-Torch v{__version__} ready! GPU: {gpu_name} ({gpu_memory:.1f}GB)")
+            print(f" CSCG-Torch v{__version__} ready! GPU: {gpu_name} ({gpu_memory:.1f}GB)")
         elif torch.backends.mps.is_available():
-            print(f"🍎 CSCG-Torch v{__version__} ready! Using Apple Silicon MPS")
+            print(f" CSCG-Torch v{__version__} ready! Using Apple Silicon MPS")
         else:
-            print(f"💻 CSCG-Torch v{__version__} ready! Using CPU")
+            print(f" CSCG-Torch v{__version__} ready! Using CPU")
     except:
-        print(f"📦 CSCG-Torch v{__version__} loaded")
+        print(f" CSCG-Torch v{__version__} loaded")
 
 # Uncomment to enable verbose import messages
 # _print_system_info()
