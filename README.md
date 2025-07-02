@@ -9,12 +9,12 @@ A high-performance PyTorch implementation of Compositional State-Action Graph (C
 
 ## ✨ Key Features
 
-🚀 **GPU-Accelerated**: Full CUDA/MPS support with V100/A100 optimizations  
-⚡ **Fast Sequence Generation**: Vectorized GPU operations with smart chunking  
-🧠 **Mixed Precision**: FP16 Tensor Core support for 4x speedup  
-📊 **Easy to Use**: Simple API with Google Colab compatibility  
-🔧 **Research Ready**: Clean, documented code with comprehensive examples  
-🎯 **Modular Design**: Extensible framework for custom environments
+**GPU-Accelerated**: Full CUDA/MPS support with V100/A100 optimizations  
+**Fast Sequence Generation**: Vectorized GPU operations with smart chunking  
+**Mixed Precision**: FP16 Tensor Core support for 4x speedup  
+**Easy to Use**: Simple API with Google Colab compatibility  
+**Research Ready**: Clean, documented code with comprehensive examples  
+**Modular Design**: Extensible framework for custom environments
 
 ## 📁 Repository Structure
 
