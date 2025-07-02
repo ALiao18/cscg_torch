@@ -76,6 +76,39 @@ def create_room_adapter(room_data, adapter_type="torch", **kwargs):
     return adapter
 
 
+def generate_room_sequence(adapter, length, device=None):
+    """
+    Generate sequence using GPU acceleration.
+    
+    Args:
+        adapter: Room adapter (RoomTorchAdapter or RoomNPAdapter)
+        length (int): Sequence length to generate
+        device (torch.device, optional): Device for computation
+        
+    Returns:
+        tuple: (x_seq, a_seq) as numpy arrays
+    """
+    # Validate inputs
+    assert isinstance(length, int), f"length must be int, got {type(length)}"
+    assert length > 0, f"length must be positive, got {length}"
+    
+    # Auto-detect device if not provided
+    if device is None:
+        if torch.cuda.is_available():
+            device = torch.device("cuda:0")
+        elif torch.backends.mps.is_available():
+            device = torch.device("mps:0")
+        else:
+            device = torch.device("cpu")
+    
+    # Use GPU generation method
+    if hasattr(adapter, 'generate_sequence_gpu'):
+        print(f"Using GPU-accelerated sequence generation on {device}")
+        return adapter.generate_sequence_gpu(length, device)
+    else:
+        raise ValueError("Adapter does not support GPU sequence generation")
+
+
 def get_room_n_clones(n_clones_per_obs=1, device=None):
     """
     Get n_clones tensor for room navigation CHMM model.
@@ -93,7 +126,12 @@ def get_room_n_clones(n_clones_per_obs=1, device=None):
     assert n_clones_per_obs <= 1000, f"n_clones_per_obs too large (max 1000), got {n_clones_per_obs}"
     
     if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            device = torch.device("cuda:0")
+        elif torch.backends.mps.is_available():
+            device = torch.device("mps:0")
+        else:
+            device = torch.device("cpu")
     
     # Validate device
     assert isinstance(device, torch.device), f"device must be torch.device, got {type(device)}"
@@ -109,7 +147,7 @@ def get_room_n_clones(n_clones_per_obs=1, device=None):
     assert isinstance(result, torch.Tensor), f"result must be torch.Tensor, got {type(result)}"
     assert result.shape == (n_obs_types,), f"result shape must be ({n_obs_types},), got {result.shape}"
     assert result.dtype == torch.int64, f"result dtype must be int64, got {result.dtype}"
-    assert result.device == device, f"result device mismatch: {result.device} != {device}"
+    assert result.device.type == device.type, f"result device type mismatch: {result.device} != {device}"
     assert torch.all(result == n_clones_per_obs), f"all result values must equal {n_clones_per_obs}"
     
     return result

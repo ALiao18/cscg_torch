@@ -87,4 +87,3 @@ Bible: Less is more. Simplicity is best. Always opt for simplicity and excellent
   Require at least one reviewer; enforce linting and tests in CI.
 
 ---
-

@@ -698,7 +698,12 @@ def train_chmm(n_clones, x, a, device=None, method='em_T', n_iter=50, pseudocoun
     
     # Auto-detect device if not provided
     if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            device = torch.device("cuda:0")
+        elif torch.backends.mps.is_available():
+            device = torch.device("mps:0")
+        else:
+            device = torch.device("cpu")
     
     # Move tensors to device
     n_clones = n_clones.to(device)
@@ -712,6 +717,7 @@ def train_chmm(n_clones, x, a, device=None, method='em_T', n_iter=50, pseudocoun
     
     # Initialize CHMM model
     print(f"Initializing CHMM with {n_clones.sum().item()} states on {device}")
+    print(f"Input tensors: n_clones device={n_clones.device}, x device={x.device}, a device={a.device}")
     model = CHMM_torch(
         n_clones=n_clones,
         x=x, 
@@ -719,6 +725,8 @@ def train_chmm(n_clones, x, a, device=None, method='em_T', n_iter=50, pseudocoun
         pseudocount=pseudocount,
         seed=seed
     )
+    print(f"Model initialized on device: {model.device}")
+    print(f"Model T matrix device: {model.T.device if hasattr(model, 'T') else 'Not initialized'}")
     
     print(f"Starting {method} training for {n_iter} iterations...")
     
@@ -772,7 +780,6 @@ def train_chmm(n_clones, x, a, device=None, method='em_T', n_iter=50, pseudocoun
     
     return model, progression
 
-
 def make_E(n_clones, device=None):
     """
     Create emission matrix mapping clones to observations.
@@ -813,7 +820,6 @@ def make_E(n_clones, device=None):
     assert torch.allclose(E.sum(dim=1), torch.ones(total_clones, device=device)), "E rows must sum to 1"
     
     return E
-
 
 def make_E_sparse(n_clones, device=None):
     """
@@ -868,7 +874,6 @@ def make_E_sparse(n_clones, device=None):
     
     return E_sparse
 
-
 def compute_forward_messages(chmm_state, x, a, device, pseudocount_E=1e-10):
     """
     Compute forward messages for a CHMM.
@@ -918,7 +923,6 @@ def compute_forward_messages(chmm_state, x, a, device, pseudocount_E=1e-10):
     assert mess_fwd.shape[0] == len(x), f"Time dimension mismatch: {mess_fwd.shape[0]} != {len(x)}"
     
     return mess_fwd
-
 
 def place_field(mess_fwd, rc, clone, device=None):
     """

@@ -22,8 +22,13 @@ class TestConfig:
     SEED = 42
     
     # Device settings
-    USE_GPU = torch.cuda.is_available()
-    DEVICE = torch.device("cuda" if USE_GPU else "cpu")
+    USE_GPU = torch.cuda.is_available() or torch.backends.mps.is_available()
+    if torch.cuda.is_available():
+        DEVICE = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        DEVICE = torch.device("mps")
+    else:
+        DEVICE = torch.device("cpu")
     
     # Numerical tolerances
     FLOAT_TOL = 1e-6

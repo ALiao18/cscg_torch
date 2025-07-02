@@ -25,7 +25,13 @@ class CSCGEnvironmentAdapter:
         assert seed >= 0, f"seed must be non-negative, got {seed}"
         
         self.rng = np.random.RandomState(seed)
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        # Support CUDA, MPS (Apple Silicon), and CPU
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda:0")
+        elif torch.backends.mps.is_available():
+            self.device = torch.device("mps:0")
+        else:
+            self.device = torch.device("cpu")
         self.n_actions = None  # Should be set by subclasses
         
         # Post-initialization assertions
