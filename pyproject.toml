@@ -63,7 +63,6 @@ Issues = "https://github.com/ALiao18/cscg_torch/issues"
 Documentation = "https://github.com/ALiao18/cscg_torch#readme"
 
 [tool.setuptools]
-packages = ["cscg_torch"]
 include-package-data = true
 
 [tool.setuptools.packages.find]
