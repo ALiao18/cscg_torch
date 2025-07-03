@@ -6,7 +6,7 @@ include *.md
 include *.txt
 
 # Include all Python files
-recursive-include cscg_torch *.py
+recursive-include cscg_torch/cscg_torch *.py
 
 # Include examples and documentation
 recursive-include examples *.py *.ipynb *.md
