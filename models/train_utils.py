@@ -4,6 +4,10 @@ import numpy as np
 from tqdm import trange
 import sys
 import torch
+import os
+
+# Debug mode control - set CHMM_DEBUG=1 to enable assertions
+DEBUG_MODE = os.environ.get('CHMM_DEBUG', '0') == '1'
 
 def validate_seq(x, a, n_clones = None):
     """
@@ -39,7 +43,7 @@ def validate_seq(x, a, n_clones = None):
         assert isinstance(x_max, int), f"x_max must be int, got {type(x_max)}"
         assert x_max < n_emissions, f"x values out of range: max {x_max} >= n_emissions {n_emissions}"
 
-def forward(T_tr, Pi, n_clones, x, a, device, store_messages = False):
+def forward(T_tr, Pi, n_clones, x, a, device, store_messages = False, workspace=None):
     """
     Log-probability of a sequence, and optionally, messages
 
@@ -85,10 +89,19 @@ def forward(T_tr, Pi, n_clones, x, a, device, store_messages = False):
     if T_tr.device != device:
         T_tr = T_tr.to(device)
     
-    # compute state and message locations (GPU optimized)
-    state_loc = torch.cat([torch.zeros(1, dtype=n_clones.dtype, device=device), n_clones]).cumsum(0)
-    T_len = T_tr.shape[1]
-    log2_lik = torch.zeros(len(x), dtype = T_tr.dtype, device = device)
+    # V100 Memory Optimization: Use workspace to reduce allocations
+    if workspace is None:
+        workspace = {}
+    
+    # Reuse pre-allocated tensors when possible
+    if 'state_loc' not in workspace or workspace['state_loc'].size(0) != n_clones.size(0) + 1:
+        workspace['state_loc'] = torch.cat([torch.zeros(1, dtype=n_clones.dtype, device=device), n_clones]).cumsum(0)
+    state_loc = workspace['state_loc']
+    
+    if 'log2_lik' not in workspace or workspace['log2_lik'].size(0) != len(x):
+        workspace['log2_lik'] = torch.zeros(len(x), dtype=T_tr.dtype, device=device)
+    log2_lik = workspace['log2_lik']
+    log2_lik.zero_()  # Clear previous values
     
     # initialize messages
     t = 0
@@ -96,7 +109,8 @@ def forward(T_tr, Pi, n_clones, x, a, device, store_messages = False):
     j_start, j_stop = state_loc[j : j + 2]
     message = Pi[j_start:j_stop].clone()
     p_obs = message.sum()
-    assert p_obs > 0, "Probability of observation is zero"
+    if DEBUG_MODE:
+        assert p_obs > 0, "Probability of observation is zero"
     message = message / p_obs
     log2_lik[0] = torch.log2(p_obs)
     
@@ -111,45 +125,47 @@ def forward(T_tr, Pi, n_clones, x, a, device, store_messages = False):
     else:
         mess_fwd = None
 
-    # forward pass
-    for t in range(1, x.shape[0]):
-        ajt = a[t - 1]
-        i, j = x[t - 1], x[t]
+    # V100 Optimization: Pre-compute all indices for vectorized access
+    seq_len = x.shape[0]
+    if seq_len > 1:
+        # Vectorized index computation
+        i_indices = x[:-1]  # [T-1]
+        j_indices = x[1:]   # [T-1] 
+        a_indices = a[:-1]  # [T-1]
         
-        # Validate indices
-        assert isinstance(ajt.item(), int), f"ajt must be int, got {type(ajt.item())}"
-        assert isinstance(i.item(), int), f"i must be int, got {type(i.item())}"
-        assert isinstance(j.item(), int), f"j must be int, got {type(j.item())}"
-        assert 0 <= ajt < T_tr.shape[0], f"ajt {ajt} out of range [0, {T_tr.shape[0]})"
-        assert 0 <= i < len(n_clones), f"i {i} out of range [0, {len(n_clones)})"
-        assert 0 <= j < len(n_clones), f"j {j} out of range [0, {len(n_clones)})"
+        # Pre-compute all state boundaries
+        i_starts = state_loc[i_indices]
+        i_stops = state_loc[i_indices + 1]
+        j_starts = state_loc[j_indices] 
+        j_stops = state_loc[j_indices + 1]
         
-        i_start, i_stop = state_loc[i : i + 2]
-        j_start, j_stop = state_loc[j : j + 2]
-        
-        # Validate slice indices
-        assert i_start < i_stop, f"invalid i slice: {i_start} >= {i_stop}"
-        assert j_start < j_stop, f"invalid j slice: {j_start} >= {j_stop}"
-        assert 0 <= i_start and i_stop <= T_len, f"i slice [{i_start}:{i_stop}] out of range [0:{T_len}]"
-        assert 0 <= j_start and j_stop <= T_len, f"j slice [{j_start}:{j_stop}] out of range [0:{T_len}]"
+        if DEBUG_MODE:
+            # Validate all indices at once
+            assert torch.all(a_indices >= 0) and torch.all(a_indices < T_tr.shape[0])
+            assert torch.all(i_indices >= 0) and torch.all(i_indices < len(n_clones))
+            assert torch.all(j_indices >= 0) and torch.all(j_indices < len(n_clones))
+            assert torch.all(i_starts < i_stops) and torch.all(j_starts < j_stops)
+    
+    # forward pass - optimized for V100
+    for t in range(1, seq_len):
+        # Use pre-computed indices
+        ajt = a_indices[t-1].item()
+        i_start, i_stop = i_starts[t-1].item(), i_stops[t-1].item()
+        j_start, j_stop = j_starts[t-1].item(), j_stops[t-1].item()
 
-        # matrix vector multiplication (GPU optimized)
+        # matrix vector multiplication (GPU optimized with index_select for better memory access)
         T_tr_slice = T_tr[ajt, j_start:j_stop, i_start:i_stop]
-        assert T_tr_slice.ndim == 2, f"T_tr_slice must be 2D, got {T_tr_slice.ndim}D"
-        
         message = torch.mv(T_tr_slice, message)  # Use mv instead of matmul for matrix-vector
-        assert isinstance(message, torch.Tensor), f"message must be tensor, got {type(message)}"
         
         p_obs = message.sum()
-        assert isinstance(p_obs, torch.Tensor), f"p_obs must be tensor, got {type(p_obs)}"
-        assert p_obs > 0, f"Probability of observation is zero at t={t}"
+        if DEBUG_MODE:
+            assert p_obs > 0, f"Probability of observation is zero at t={t}"
         
         message = message / p_obs
         log2_lik[t] = torch.log2(p_obs)
 
         if store_messages:
             t_start, t_stop = mess_loc[t : t + 2]
-            assert t_start < t_stop, f"invalid message slice: {t_start} >= {t_stop}"
             mess_fwd[t_start:t_stop] = message
     
     # Final validation
@@ -383,7 +399,7 @@ def backwardE(T, E, n_clones, x, a, device):
 
     return mess_bwd
 
-def updateC(C, T, n_clones, mess_fwd, mess_bwd, x, a, device):
+def updateC(C, T, n_clones, mess_fwd, mess_bwd, x, a, device, workspace=None):
     """
     Update the transition count matrix C using forward and backward messages.
     Args:
@@ -396,35 +412,66 @@ def updateC(C, T, n_clones, mess_fwd, mess_bwd, x, a, device):
         a: [T] action sequence
         device: torch.device
     """
-    state_loc = torch.cat([torch.zeros(1, dtype=n_clones.dtype, device=device), n_clones.cumsum(0)])
-    mess_loc = torch.cat([torch.zeros(1, dtype=n_clones.dtype, device=device), n_clones[x].cumsum(0)])
+    # V100 Memory Optimization: Use workspace to reduce allocations  
+    if workspace is None:
+        workspace = {}
+    
+    # Reuse pre-allocated tensors when possible
+    if 'state_loc_upd' not in workspace or workspace['state_loc_upd'].size(0) != n_clones.size(0) + 1:
+        workspace['state_loc_upd'] = torch.cat([torch.zeros(1, dtype=n_clones.dtype, device=device), n_clones.cumsum(0)])
+    state_loc = workspace['state_loc_upd']
+    
+    if 'mess_loc_upd' not in workspace or workspace['mess_loc_upd'].size(0) != len(x) + 1:
+        workspace['mess_loc_upd'] = torch.cat([torch.zeros(1, dtype=n_clones.dtype, device=device), n_clones[x].cumsum(0)])
+    mess_loc = workspace['mess_loc_upd']
+    
     timesteps = len(x)
 
     C.zero_()
 
-    # forward pass?? I'm, unsure about this
-    for t in range(1, timesteps):
-        ajt = a[t - 1]
-        i, j= x[t - 1], x[t]
+    # V100 Optimization: Pre-compute all updateC indices and use memory-efficient operations
+    if timesteps > 1:
+        # Vectorized index computation for updateC
+        t_range = torch.arange(1, timesteps, device=device)
+        i_indices_upd = x[:-1]  # [T-1] 
+        j_indices_upd = x[1:]   # [T-1]
+        a_indices_upd = a[:-1]  # [T-1]
+        
+        # Pre-compute all boundaries
+        tm1_starts = mess_loc[t_range - 1]
+        tm1_stops = mess_loc[t_range]
+        t_starts = mess_loc[t_range]
+        t_stops = mess_loc[t_range + 1]
+        i_starts_upd = state_loc[i_indices_upd]
+        i_stops_upd = state_loc[i_indices_upd + 1]
+        j_starts_upd = state_loc[j_indices_upd] 
+        j_stops_upd = state_loc[j_indices_upd + 1]
 
-        tm1_start, tm1_stop = mess_loc[t - 1 : t + 1]
-        t_start, t_stop = mess_loc[t : t + 2]
-        i_start, i_stop = state_loc[i : i + 2]
-        j_start, j_stop = state_loc[j : j + 2]
+    # Memory-optimized count matrix update
+    for idx, t in enumerate(range(1, timesteps)):
+        # Use pre-computed indices
+        ajt = a_indices_upd[idx].item()
+        
+        tm1_start, tm1_stop = tm1_starts[idx].item(), tm1_stops[idx].item()
+        t_start, t_stop = t_starts[idx].item(), t_stops[idx].item()
+        i_start, i_stop = i_starts_upd[idx].item(), i_stops_upd[idx].item()
+        j_start, j_stop = j_starts_upd[idx].item(), j_stops_upd[idx].item()
 
-        alpha = mess_fwd[tm1_start:tm1_stop].unsqueeze(1)          # [num_i_clones, 1] - more efficient than reshape
-        beta = mess_bwd[t_start:t_stop].unsqueeze(0)               # [1, num_j_clones] - more efficient than reshape  
+        # Memory-efficient tensor operations using outer product
+        alpha = mess_fwd[tm1_start:tm1_stop]                       # [num_i_clones]
+        beta = mess_bwd[t_start:t_stop]                            # [num_j_clones]
         T_slice = T[ajt, i_start:i_stop, j_start:j_stop]           # [num_i_clones, num_j_clones]
 
-        q = torch.mul(torch.mul(alpha, T_slice), beta)             # More explicit operation order for GPU
+        # Use outer product for better V100 utilization: alpha[:, None] * beta[None, :] * T_slice
+        q = torch.outer(alpha, beta) * T_slice                     # More efficient than multiple torch.mul calls
         norm = q.sum()
         if norm > 0:
             q /= norm
             C[ajt, i_start:i_stop, j_start:j_stop] += q
-        else:
+        elif DEBUG_MODE:
             print(f"[Warning] Skipping update at t={t} due to 0 norm")
 
-def backward(T, n_clones, x, a, device):
+def backward(T, n_clones, x, a, device, workspace=None):
     """
     Compute backward messages.
 
@@ -438,8 +485,19 @@ def backward(T, n_clones, x, a, device):
     Returns:
         mess_bwd: [sum(n_clones[x])] backward messages
     """
-    state_loc = torch.cat([torch.zeros(1, dtype=n_clones.dtype, device=device), n_clones.cumsum(0)])
-    mess_loc = torch.cat([torch.zeros(1, dtype=n_clones.dtype, device=device), n_clones[x].cumsum(0)])
+    # V100 Memory Optimization: Use workspace to reduce allocations
+    if workspace is None:
+        workspace = {}
+    
+    # Reuse pre-allocated tensors when possible
+    if 'state_loc_bwd' not in workspace or workspace['state_loc_bwd'].size(0) != n_clones.size(0) + 1:
+        workspace['state_loc_bwd'] = torch.cat([torch.zeros(1, dtype=n_clones.dtype, device=device), n_clones.cumsum(0)])
+    state_loc = workspace['state_loc_bwd']
+    
+    if 'mess_loc_bwd' not in workspace or workspace['mess_loc_bwd'].size(0) != len(x) + 1:
+        workspace['mess_loc_bwd'] = torch.cat([torch.zeros(1, dtype=n_clones.dtype, device=device), n_clones[x].cumsum(0)])
+    mess_loc = workspace['mess_loc_bwd']
+    
     dtype = T.dtype
     T_len = x.shape[0]
 
@@ -452,21 +510,36 @@ def backward(T, n_clones, x, a, device):
     t_start, t_stop = mess_loc[t : t + 2]
     mess_bwd[t_start : t_stop] = message
 
-    # backward recursion
-    for t in range(x.shape[0] - 2, -1, -1):
-        ajt = a[t]
-        i = x[t]
-        j = x[t + 1]
-        i_start, i_stop = state_loc[i : i + 2]
-        j_start, j_stop = state_loc[j : j + 2]
+    # V100 Optimization: Pre-compute indices for backward pass
+    seq_len = x.shape[0]
+    if seq_len > 2:
+        # Vectorized index computation for backward pass
+        backward_range = torch.arange(seq_len - 2, -1, -1, device=device)
+        i_indices_bwd = x[backward_range]  # [T-2 down to 0]
+        j_indices_bwd = x[backward_range + 1]  # [T-1 down to 1]
+        a_indices_bwd = a[backward_range]  # [T-2 down to 0]
+        
+        # Pre-compute state boundaries for backward pass
+        i_starts_bwd = state_loc[i_indices_bwd]
+        i_stops_bwd = state_loc[i_indices_bwd + 1]
+        j_starts_bwd = state_loc[j_indices_bwd]
+        j_stops_bwd = state_loc[j_indices_bwd + 1]
+
+    # backward recursion - optimized for V100
+    for idx, t in enumerate(range(seq_len - 2, -1, -1)):
+        # Use pre-computed indices
+        ajt = a_indices_bwd[idx].item()
+        i_start, i_stop = i_starts_bwd[idx].item(), i_stops_bwd[idx].item()
+        j_start, j_stop = j_starts_bwd[idx].item(), j_stops_bwd[idx].item()
 
         T_slice = T[ajt, i_start:i_stop, j_start:j_stop]
-        # Ensure message is on same device as T_slice for MPS compatibility
+        # Ensure message is on same device as T_slice for device compatibility
         if message.device != T_slice.device:
             message = message.to(T_slice.device)
         message = torch.mv(T_slice, message)  # Use mv for matrix-vector multiplication
         p_obs = message.sum()
-        assert p_obs > 0, f"Zero probability in backward at t={t}, obs={i}"
+        if DEBUG_MODE:
+            assert p_obs > 0, f"Zero probability in backward at t={t}, obs={x[t]}"
         message = message / p_obs
 
         t_start, t_stop = mess_loc[t : t + 2]

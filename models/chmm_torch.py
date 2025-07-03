@@ -472,12 +472,17 @@ class CHMM_torch(object):
             if not hasattr(self, '_T_transposed') or self._T_transposed is None:
                 self._T_transposed = self.T.permute(0, 2, 1).contiguous()
             
+            # Initialize workspace for memory optimization
+            if not hasattr(self, '_workspace'):
+                self._workspace = {}
+            
             log2_lik, _ = forward(
                 self._T_transposed,
                 self.Pi_x,
                 self.n_clones,
                 x_gpu, a_gpu, self.device,
-                store_messages=False
+                store_messages=False,
+                workspace=self._workspace
             )
             
             # Validate and return results
@@ -693,10 +698,14 @@ class CHMM_torch(object):
             x_gpu = x.to(device=self.device, non_blocking=non_blocking)
             a_gpu = a.to(device=self.device, non_blocking=non_blocking)
             
-            # Initialize training state
+            # Initialize training state and workspace for V100 optimization
             convergence = []
             best_bps = float('inf')
             patience_counter = 0
+            
+            # Initialize workspace for memory optimization
+            if not hasattr(self, '_workspace'):
+                self._workspace = {}
             max_patience = 10
             
             # Pre-compute transposed transition matrix for efficiency
@@ -715,14 +724,15 @@ class CHMM_torch(object):
                         self.Pi_x,
                         self.n_clones,
                         x_gpu, a_gpu, self.device,
-                        store_messages=True
+                        store_messages=True,
+                        workspace=self._workspace
                     )
                     
                     # Backward pass
-                    mess_bwd = backward(self.T, self.n_clones, x_gpu, a_gpu, self.device)
+                    mess_bwd = backward(self.T, self.n_clones, x_gpu, a_gpu, self.device, workspace=self._workspace)
                     
                     # Update count matrix
-                    updateC(self.C, self.T, self.n_clones, mess_fwd, mess_bwd, x_gpu, a_gpu, self.device)
+                    updateC(self.C, self.T, self.n_clones, mess_fwd, mess_bwd, x_gpu, a_gpu, self.device, workspace=self._workspace)
 
                     # === M-step: Parameter update ===
                     self.update_T(verbose=False)
