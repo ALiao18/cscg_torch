@@ -39,8 +39,8 @@ Google Colab Usage:
 """
 
 __version__ = "1.0.0"
-__author__ = "CSCG Research Team"
-__email__ = "contact@cscg-research.org"
+__author__ = "Andrew Liao"
+__email__ = "yl8520@nyu.edu"
 
 # Core imports for easy access
 from .models.chmm_torch import CHMM_torch

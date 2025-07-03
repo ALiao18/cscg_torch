@@ -1,0 +1,80 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cscg-torch"
+version = "1.0.0"
+authors = [
+    {name = "Andrew Liao", email = "yl8520@nyu.edu"},
+]
+description = "A PyTorch implementation of Compositional State-Action Graph (CSCG) models for reinforcement learning"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+keywords = ["pytorch", "reinforcement learning", "navigation", "cognitive graphs", "CSCG", "GPU acceleration"]
+dependencies = [
+    "numpy>=1.24.0",
+    "torch>=2.1.0",
+    "tqdm>=4.65.0",
+    "scipy>=1.10.0",
+    "matplotlib>=3.7.0",
+    "numba>=0.57.0",
+    "PyYAML>=6.0.0",
+]
+
+[project.optional-dependencies]
+visualization = ["plotly>=5.0.0", "seaborn>=0.12.0"]
+notebooks = ["jupyter>=1.0.0", "jupytext>=1.15.0"]
+graphs = ["python-igraph>=0.10.0"]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+all = [
+    "plotly>=5.0.0",
+    "seaborn>=0.12.0",
+    "jupyter>=1.0.0",
+    "jupytext>=1.15.0",
+    "python-igraph>=0.10.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/ALiao18/cscg_torch"
+Repository = "https://github.com/ALiao18/cscg_torch"
+Issues = "https://github.com/ALiao18/cscg_torch/issues"
+Documentation = "https://github.com/ALiao18/cscg_torch#readme"
+
+[tool.setuptools]
+packages = ["cscg_torch"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["cscg_torch*"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38', 'py39', 'py310', 'py311']
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"] 
