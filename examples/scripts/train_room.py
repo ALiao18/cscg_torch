@@ -17,8 +17,8 @@ def parse_args():
     # Training parameters
     parser.add_argument('--seq_len', type=int, default=150000,
                        help='Length of training sequence (default: 15000)')
-    parser.add_argument('--n_clones_per_obs', type=int, default=150,
-                       help='Number of clones per observation type (default: 150)')
+    parser.add_argument('--n_clones_per_obs', type=int, default=16,
+                       help='Number of clones per observation type (default: 16, was 150 - too large for A100)')
     parser.add_argument('--n_iter', type=int, default=1,
                        help='Number of EM iterations (default: 100)')
     parser.add_argument('--pseudocount', type=float, default=0.01,
