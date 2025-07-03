@@ -1094,3 +1094,97 @@ def place_field(mess_fwd, rc, clone, device=None):
     field = field / count.float()
     
     return field
+
+def train_chmm(n_clones, x, a, device=None, method='em_T', n_iter=50, pseudocount=0.01, seed=42, 
+               learn_E=False, viterbi=False, early_stopping=True, min_improvement=1e-6,
+               use_mixed_precision=False, memory_efficient=True):
+    """
+    Train a CHMM model with GPU optimizations.
+    
+    Args:
+        n_clones: Number of clones per observation
+        x: Observation sequence
+        a: Action sequence  
+        device: Device for computation
+        method: Training method ('em_T', 'viterbi_T', 'em_E')
+        n_iter: Number of iterations
+        pseudocount: Pseudocount for smoothing
+        seed: Random seed
+        learn_E: Whether to learn emissions
+        viterbi: Whether to use Viterbi training
+        early_stopping: Whether to use early stopping
+        min_improvement: Minimum improvement for early stopping
+        use_mixed_precision: Whether to use mixed precision (deprecated for A100)
+        memory_efficient: Whether to use memory optimizations
+        
+    Returns:
+        tuple: (model, progression) where progression is BPS history
+    """
+    # Import here to avoid circular imports
+    from .chmm_torch import CHMM_torch
+    
+    # Device setup
+    if device is None:
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            device = torch.device("mps")
+        else:
+            device = torch.device("cpu")
+    
+    # Convert inputs to tensors on correct device
+    if not isinstance(n_clones, torch.Tensor):
+        n_clones = torch.tensor(n_clones, dtype=torch.int64, device=device)
+    else:
+        n_clones = n_clones.to(device)
+        
+    if not isinstance(x, torch.Tensor):
+        x = torch.tensor(x, dtype=torch.int64, device=device)
+    else:
+        x = x.to(device)
+        
+    if not isinstance(a, torch.Tensor):
+        a = torch.tensor(a, dtype=torch.int64, device=device)
+    else:
+        a = a.to(device)
+    
+    # Initialize CHMM model with optimizations
+    model = CHMM_torch(
+        n_clones=n_clones, 
+        x=x, 
+        a=a,
+        pseudocount=pseudocount,
+        seed=seed,
+        memory_efficient=memory_efficient
+    )
+    
+    # Run training with appropriate method
+    if method == 'em_T':
+        progression = model.learn_em_T(
+            x=x, 
+            a=a, 
+            n_iter=n_iter, 
+            term_early=early_stopping,
+            min_improvement=min_improvement
+        )
+    elif method == 'viterbi_T':
+        progression = model.learn_viterbi_T(
+            x=x, 
+            a=a, 
+            n_iter=n_iter, 
+            term_early=early_stopping
+        )
+    elif method == 'em_E':
+        if learn_E:
+            progression = model.learn_em_E(
+                x=x, 
+                a=a, 
+                n_iter=n_iter, 
+                term_early=early_stopping
+            )
+        else:
+            raise ValueError("learn_E must be True when using method='em_E'")
+    else:
+        raise ValueError(f"Unknown method: {method}")
+    
+    return model, progression
