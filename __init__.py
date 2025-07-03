@@ -60,7 +60,10 @@ from .utils import (
     plot_training_progression,
     plot_room_layout,
     detect_optimal_device,
-    get_gpu_info
+    get_gpu_info,
+    optimize_for_gpu,
+    benchmark_device,
+    get_memory_info
 )
 from .utils.data_utils import create_random_room, room_info, get_available_rooms
 
@@ -93,6 +96,9 @@ __all__ = [
     'plot_graph',
     'detect_optimal_device',
     'get_gpu_info',
+    'optimize_for_gpu',
+    'benchmark_device',
+    'get_memory_info',
     
     # Version info
     '__version__',

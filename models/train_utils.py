@@ -73,13 +73,20 @@ def forward(T_tr, Pi, n_clones, x, a, device, store_messages = False):
     assert T_tr.shape[2] == n_states, f"T_tr dim 2 mismatch: {T_tr.shape[2]} != {n_states}"
     assert n_clones.sum() == n_states, f"n_clones sum mismatch: {n_clones.sum()} != {n_states}"
     
-    # Ensure all tensors are on the correct device
-    x, a = x.to(device), a.to(device)
-    Pi, n_clones = Pi.to(device), n_clones.to(device)
-    T_tr = T_tr.to(device)
+    # Ensure all tensors are on the correct device (optimized)
+    if x.device != device:
+        x = x.to(device)
+    if a.device != device:
+        a = a.to(device)
+    if Pi.device != device:
+        Pi = Pi.to(device)
+    if n_clones.device != device:
+        n_clones = n_clones.to(device)
+    if T_tr.device != device:
+        T_tr = T_tr.to(device)
     
-    # compute state and message locations
-    state_loc = torch.cat([torch.tensor([0], dtype=n_clones.dtype, device=device), n_clones]).cumsum(0)
+    # compute state and message locations (GPU optimized)
+    state_loc = torch.cat([torch.zeros(1, dtype=n_clones.dtype, device=device), n_clones]).cumsum(0)
     T_len = T_tr.shape[1]
     log2_lik = torch.zeros(len(x), dtype = T_tr.dtype, device = device)
     
@@ -126,11 +133,11 @@ def forward(T_tr, Pi, n_clones, x, a, device, store_messages = False):
         assert 0 <= i_start and i_stop <= T_len, f"i slice [{i_start}:{i_stop}] out of range [0:{T_len}]"
         assert 0 <= j_start and j_stop <= T_len, f"j slice [{j_start}:{j_stop}] out of range [0:{T_len}]"
 
-        # matrix vector multiplication
+        # matrix vector multiplication (GPU optimized)
         T_tr_slice = T_tr[ajt, j_start:j_stop, i_start:i_stop]
         assert T_tr_slice.ndim == 2, f"T_tr_slice must be 2D, got {T_tr_slice.ndim}D"
         
-        message = torch.matmul(T_tr_slice, message)
+        message = torch.mv(T_tr_slice, message)  # Use mv instead of matmul for matrix-vector
         assert isinstance(message, torch.Tensor), f"message must be tensor, got {type(message)}"
         
         p_obs = message.sum()
@@ -389,8 +396,8 @@ def updateC(C, T, n_clones, mess_fwd, mess_bwd, x, a, device):
         a: [T] action sequence
         device: torch.device
     """
-    state_loc = torch.cat([torch.tensor([0], dtype = n_clones.dtype, device = device), n_clones.cumsum(0)])
-    mess_loc = torch.cat([torch.tensor([0], dtype = n_clones.dtype, device = device), n_clones[x].cumsum(0)])
+    state_loc = torch.cat([torch.zeros(1, dtype=n_clones.dtype, device=device), n_clones.cumsum(0)])
+    mess_loc = torch.cat([torch.zeros(1, dtype=n_clones.dtype, device=device), n_clones[x].cumsum(0)])
     timesteps = len(x)
 
     C.zero_()
@@ -405,11 +412,11 @@ def updateC(C, T, n_clones, mess_fwd, mess_bwd, x, a, device):
         i_start, i_stop = state_loc[i : i + 2]
         j_start, j_stop = state_loc[j : j + 2]
 
-        alpha = mess_fwd[tm1_start:tm1_stop].reshape(-1, 1)        # [num_i_clones, 1]
-        beta = mess_bwd[t_start:t_stop].reshape(1, -1)             # [1, num_j_clones]
+        alpha = mess_fwd[tm1_start:tm1_stop].unsqueeze(1)          # [num_i_clones, 1] - more efficient than reshape
+        beta = mess_bwd[t_start:t_stop].unsqueeze(0)               # [1, num_j_clones] - more efficient than reshape  
         T_slice = T[ajt, i_start:i_stop, j_start:j_stop]           # [num_i_clones, num_j_clones]
 
-        q = alpha * T_slice * beta                                 # [num_i_clones, num_j_clones]
+        q = torch.mul(torch.mul(alpha, T_slice), beta)             # More explicit operation order for GPU
         norm = q.sum()
         if norm > 0:
             q /= norm
@@ -431,8 +438,8 @@ def backward(T, n_clones, x, a, device):
     Returns:
         mess_bwd: [sum(n_clones[x])] backward messages
     """
-    state_loc = torch.cat([torch.tensor([0], dtype=n_clones.dtype, device=device), n_clones.cumsum(0)])
-    mess_loc = torch.cat([torch.tensor([0], dtype=n_clones.dtype, device=device), n_clones[x].cumsum(0)])
+    state_loc = torch.cat([torch.zeros(1, dtype=n_clones.dtype, device=device), n_clones.cumsum(0)])
+    mess_loc = torch.cat([torch.zeros(1, dtype=n_clones.dtype, device=device), n_clones[x].cumsum(0)])
     dtype = T.dtype
     T_len = x.shape[0]
 
@@ -454,7 +461,10 @@ def backward(T, n_clones, x, a, device):
         j_start, j_stop = state_loc[j : j + 2]
 
         T_slice = T[ajt, i_start:i_stop, j_start:j_stop]
-        message = torch.matmul(T_slice, message)
+        # Ensure message is on same device as T_slice for MPS compatibility
+        if message.device != T_slice.device:
+            message = message.to(T_slice.device)
+        message = torch.mv(T_slice, message)  # Use mv for matrix-vector multiplication
         p_obs = message.sum()
         assert p_obs > 0, f"Zero probability in backward at t={t}, obs={i}"
         message = message / p_obs
@@ -660,7 +670,8 @@ def backtrace_all(T, Pi_a, n_clones, mess_fwd, target_state, device):
     return actions, states
 
 def train_chmm(n_clones, x, a, device=None, method='em_T', n_iter=50, pseudocount=0.01, seed=42, 
-               learn_E=False, viterbi=False, early_stopping=True, min_improvement=1e-6):
+               learn_E=False, viterbi=False, early_stopping=True, min_improvement=1e-6,
+               use_mixed_precision=False, memory_efficient=True):
     """
     Train a CHMM using the CHMM_torch class methods with progression tracking.
     
@@ -677,6 +688,8 @@ def train_chmm(n_clones, x, a, device=None, method='em_T', n_iter=50, pseudocoun
         viterbi (bool): Whether to use Viterbi (hard) EM instead of soft EM
         early_stopping (bool): Whether to use early stopping
         min_improvement (float): Minimum improvement threshold for early stopping
+        use_mixed_precision (bool): Enable mixed precision training for faster GPU computation
+        memory_efficient (bool): Enable GPU memory optimizations
         
     Returns:
         tuple: (trained_model, progression_list)
@@ -696,24 +709,35 @@ def train_chmm(n_clones, x, a, device=None, method='em_T', n_iter=50, pseudocoun
     assert len(x) == len(a), f"x and a must have same length: {len(x)} != {len(a)}"
     assert method in ['em_T', 'viterbi_T', 'em_E'], f"method must be 'em_T', 'viterbi_T', or 'em_E', got {method}"
     
-    # Auto-detect device if not provided
+    # Auto-detect device if not provided (optimized)
     if device is None:
         if torch.cuda.is_available():
             device = torch.device("cuda:0")
+            print(f"Auto-detected CUDA device: {torch.cuda.get_device_name()}")
         elif torch.backends.mps.is_available():
             device = torch.device("mps:0")
+            print("Auto-detected MPS (Apple Silicon) device")
         else:
             device = torch.device("cpu")
+            print("Using CPU device")
     
-    # Move tensors to device
-    n_clones = n_clones.to(device)
-    x = x.to(device)
-    a = a.to(device)
+    # GPU memory optimization
+    if device.type == 'cuda' and memory_efficient:
+        torch.cuda.empty_cache()
     
-    # Set random seed for reproducibility
+    # Move tensors to device (avoid redundant transfers)
+    if n_clones.device != device:
+        n_clones = n_clones.to(device)
+    if x.device != device:
+        x = x.to(device)
+    if a.device != device:
+        a = a.to(device)
+    
+    # Set random seed for reproducibility (enhanced)
     torch.manual_seed(seed)
     if device.type == 'cuda':
         torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
     
     # Initialize CHMM model
     print(f"Initializing CHMM with {n_clones.sum().item()} states on {device}")
@@ -729,38 +753,47 @@ def train_chmm(n_clones, x, a, device=None, method='em_T', n_iter=50, pseudocoun
     print(f"Model T matrix device: {model.T.device if hasattr(model, 'T') else 'Not initialized'}")
     
     print(f"Starting {method} training for {n_iter} iterations...")
+    if use_mixed_precision and device.type == 'cuda':
+        print("Mixed precision training enabled")
     
-    # Choose training method and run
-    if method == 'em_T' or (not viterbi and not learn_E):
-        # Standard soft EM for transition matrices
-        progression = model.learn_em_T(
-            x=x,
-            a=a, 
-            n_iter=n_iter,
-            term_early=early_stopping,
-            min_improvement=min_improvement
-        )
+    # GPU memory monitoring
+    if device.type == 'cuda':
+        print(f"GPU memory before training: {torch.cuda.memory_allocated()/1024**3:.2f}GB")
+    
+    # Choose training method and run with mixed precision support
+    with torch.autocast(device_type=device.type if device.type == 'cuda' else 'cpu', 
+                       enabled=use_mixed_precision and device.type == 'cuda'):
         
-    elif method == 'viterbi_T' or viterbi:
-        # Hard EM (Viterbi) for transition matrices
-        progression = model.learn_viterbi_T(
-            x=x,
-            a=a,
-            n_iter=n_iter
-        )
-        
-    elif method == 'em_E' or learn_E:
-        # EM for emission matrices (keeps T fixed)
-        progression, learned_E = model.learn_em_E(
-            x=x,
-            a=a,
-            n_iter=n_iter,
-            pseudocount_extra=pseudocount
-        )
-        print(f"Learned emission matrix E with shape {learned_E.shape}")
-        
-    else:
-        raise ValueError(f"Unknown training configuration: method={method}, viterbi={viterbi}, learn_E={learn_E}")
+        if method == 'em_T' or (not viterbi and not learn_E):
+            # Standard soft EM for transition matrices
+            progression = model.learn_em_T(
+                x=x,
+                a=a, 
+                n_iter=n_iter,
+                term_early=early_stopping,
+                min_improvement=min_improvement
+            )
+            
+        elif method == 'viterbi_T' or viterbi:
+            # Hard EM (Viterbi) for transition matrices
+            progression = model.learn_viterbi_T(
+                x=x,
+                a=a,
+                n_iter=n_iter
+            )
+            
+        elif method == 'em_E' or learn_E:
+            # EM for emission matrices (keeps T fixed)
+            progression, learned_E = model.learn_em_E(
+                x=x,
+                a=a,
+                n_iter=n_iter,
+                pseudocount_extra=pseudocount
+            )
+            print(f"Learned emission matrix E with shape {learned_E.shape}")
+            
+        else:
+            raise ValueError(f"Unknown training configuration: method={method}, viterbi={viterbi}, learn_E={learn_E}")
     
     # If learning both T and E sequentially
     if learn_E and method != 'em_E':
@@ -777,6 +810,11 @@ def train_chmm(n_clones, x, a, device=None, method='em_T', n_iter=50, pseudocoun
     
     print(f"Training completed. Final BPS: {progression[-1]:.4f}")
     print(f"Total improvement: {progression[0] - progression[-1]:.4f}")
+    
+    # GPU memory cleanup
+    if device.type == 'cuda' and memory_efficient:
+        torch.cuda.empty_cache()
+        print(f"GPU memory after training: {torch.cuda.memory_allocated()/1024**3:.2f}GB")
     
     return model, progression
 
