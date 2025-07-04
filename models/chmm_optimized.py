@@ -193,17 +193,23 @@ class CHMM_Optimized(CHMM_torch):
         """Execute single EM step using optimized PyTorch operations"""
         from .train_utils import forward, backward, updateC
         
+        # Ensure all tensors are on the same device
+        device = self.device
+        T_tr = T_tr.to(device)
+        x = x.to(device)
+        a = a.to(device)
+        
         # Forward pass
         log2_lik, mess_fwd = forward(T_tr, self.Pi_x, self.n_clones, x, a, 
-                                   self.device, store_messages=True)
+                                   device, store_messages=True)
         
         # Backward pass
-        T = T_tr.transpose(1, 2)  # Un-transpose for backward pass
-        mess_bwd = backward(T, self.n_clones, x, a, self.device)
+        T = T_tr.transpose(1, 2).contiguous()  # Un-transpose for backward pass
+        mess_bwd = backward(T, self.n_clones, x, a, device)
         
         # Count update
-        C_new = torch.zeros_like(self.C)
-        updateC(C_new, T, self.n_clones, mess_fwd, mess_bwd, x, a, self.device)
+        C_new = torch.zeros_like(self.C, device=device)
+        updateC(C_new, T, self.n_clones, mess_fwd, mess_bwd, x, a, device)
         
         return log2_lik, C_new
     
@@ -219,6 +225,11 @@ class CHMM_Optimized(CHMM_torch):
         Returns:
             torch.Tensor: BPS value(s)
         """
+        # Ensure tensors are on the correct device
+        device = self.device
+        x = x.to(device)
+        a = a.to(device)
+        
         if self.use_cuda_kernels and self.cuda_kernels is not None:
             try:
                 # Use fused kernel for forward pass only

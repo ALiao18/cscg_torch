@@ -57,6 +57,13 @@ def forward(T_tr, Pi, n_clones, x, a, device, store_messages = False, workspace=
     a: action sequence
     store_messages: whether to store messages
     """
+    # Ensure all tensors are on the same device
+    device = T_tr.device  # Use the device of T_tr as reference
+    x = x.to(device)
+    a = a.to(device)
+    Pi = Pi.to(device)
+    n_clones = n_clones.to(device)
+    
     # Strict input validation
     assert isinstance(T_tr, torch.Tensor), f"T_tr must be torch.Tensor, got {type(T_tr)}"
     assert isinstance(Pi, torch.Tensor), f"Pi must be torch.Tensor, got {type(Pi)}"
@@ -79,22 +86,6 @@ def forward(T_tr, Pi, n_clones, x, a, device, store_messages = False, workspace=
     assert T_tr.shape[1] == n_states, f"T_tr dim 1 mismatch: {T_tr.shape[1]} != {n_states}"
     assert T_tr.shape[2] == n_states, f"T_tr dim 2 mismatch: {T_tr.shape[2]} != {n_states}"
     assert n_clones.sum() == n_states, f"n_clones sum mismatch: {n_clones.sum()} != {n_states}"
-    
-    # Optimization: Skip device checks in production for massive speedup
-    # With 150k steps, this eliminates 750k+ unnecessary device comparisons
-    if not SKIP_DEVICE_CHECKS:
-        # Only check devices in debug mode or when explicitly enabled
-        if x.device != device:
-            x = x.to(device)
-        if a.device != device:
-            a = a.to(device)
-        if Pi.device != device:
-            Pi = Pi.to(device)
-        if n_clones.device != device:
-            n_clones = n_clones.to(device)
-        if T_tr.device != device:
-            T_tr = T_tr.to(device)
-    # In production, assume all tensors are already on correct device from initialization
     
     # Memory Optimization: Use workspace to reduce allocations
     if workspace is None:
@@ -126,7 +117,7 @@ def forward(T_tr, Pi, n_clones, x, a, device, store_messages = False, workspace=
             torch.tensor([0], dtype=n_clones.dtype, device=device), 
             n_clones[x]
         ]).cumsum(0)
-        mess_fwd = torch.empty(mess_loc[-1], dtype = T_tr.dtype, device = device)
+        mess_fwd = torch.empty(mess_loc[-1], dtype=T_tr.dtype, device=device)
         t_start, t_stop = mess_loc[t : t + 2]
         mess_fwd[t_start:t_stop] = message
     else:

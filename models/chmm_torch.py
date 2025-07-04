@@ -51,10 +51,14 @@ class CHMM_torch(object):
             # Performance monitoring setup
             self._setup_performance_monitoring()
 
-            # Compile model for performance
+            # Import forward/backward functions
+            self.forward = forward
+            self.backward = backward
+
+            # Compile functions for performance if on CUDA
             if self.device.type == 'cuda':
-                self.forward = torch.compile(self.forward)
-                self.backward = torch.compile(self.backward)
+                self.forward = torch.compile(forward)
+                self.backward = torch.compile(backward)
 
         except Exception as e:
             self._handle_initialization_error(e)

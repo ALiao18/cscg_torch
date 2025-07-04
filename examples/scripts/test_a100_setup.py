@@ -37,14 +37,32 @@ def print_device_info():
         print(f"  - Compute Capability: {props.major}.{props.minor}")
         print(f"  - Total Memory: {props.total_memory / 1024**3:.1f} GB")
         print(f"  - CUDA Arch: sm_{props.major}{props.minor}")
-        print(f"  - Max threads per block: {props.max_threads_per_block}")
-        print(f"  - Max shared memory: {props.max_shared_memory_per_block / 1024:.0f} KB")
+        print(f"  - Multiprocessors: {props.multi_processor_count}")
         
         # Check if it's an A100
         if "A100" in props.name:
-            print("✓ A100 GPU detected!")
-            print("  - Tensor Cores available")
-            print("  - Multi-Instance GPU (MIG) capable")
+            print("\n✓ A100 GPU detected!")
+            print("  - Architecture: Ampere")
+            print("  - Tensor Cores: 3rd Generation")
+            print("  - NVLink: 3rd Generation")
+            print("  - Multi-Instance GPU (MIG): Supported")
+            print(f"  - SMs: {props.multi_processor_count}")
+    
+    # Print CUDA version information
+    print(f"\nCUDA Version: {torch.version.cuda}")
+    print(f"cuDNN Version: {torch.backends.cudnn.version()}")
+    print(f"PyTorch Version: {torch.__version__}")
+    
+    # Check if cuDNN is enabled
+    print(f"cuDNN Enabled: {torch.backends.cudnn.is_available()}")
+    print(f"cuDNN Deterministic: {torch.backends.cudnn.deterministic}")
+    print(f"cuDNN Benchmark: {torch.backends.cudnn.benchmark}")
+    
+    # Print current device settings
+    print("\nCurrent Device Settings:")
+    print(f"  - Current Device: {torch.cuda.current_device()}")
+    print(f"  - Device Count: {torch.cuda.device_count()}")
+    print(f"  - Default Tensor Type: {torch.get_default_dtype()}")
     
     return True
 
@@ -58,7 +76,20 @@ def verify_cuda_compilation():
         return True
     except Exception as e:
         print(f"❌ CUDA kernel compilation failed: {e}")
-        return False
+        print("\nTrying to install build tools...")
+        try:
+            import subprocess
+            subprocess.run(["apt-get", "update"], check=True)
+            subprocess.run(["apt-get", "install", "-y", "ninja-build"], check=True)
+            print("✓ Build tools installed")
+            
+            # Try compilation again
+            cuda_kernels = get_cuda_kernels()
+            print("✓ CUDA kernels compiled successfully after installing build tools")
+            return True
+        except Exception as install_error:
+            print(f"❌ Failed to install build tools: {install_error}")
+            return False
 
 def test_basic_operations(seq_len=1000, n_states=100):
     """Test basic CHMM operations"""
