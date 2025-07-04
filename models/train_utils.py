@@ -167,14 +167,19 @@ def forward(T_tr, Pi, n_clones, x, a, device, store_messages = False, workspace=
     # Batch index access - convert to tensor operations
     if seq_len > 1:
         # Convert scalar accesses to tensor operations where possible
-        ajt_tensor = a_indices  # [T-1] tensor of action indices
+        # CRITICAL FIX: Convert to CPU once instead of .item() in loop
+        ajt_cpu = a_indices.cpu().numpy()
+        i_starts_cpu = i_starts.cpu().numpy()
+        i_stops_cpu = i_stops.cpu().numpy()
+        j_starts_cpu = j_starts.cpu().numpy()
+        j_stops_cpu = j_stops.cpu().numpy()
         
         # Forward pass with optimized indexing
         for t in range(1, seq_len):
             t_idx = t - 1
-            ajt = ajt_tensor[t_idx].item()
-            i_start, i_stop = i_starts[t_idx].item(), i_stops[t_idx].item()
-            j_start, j_stop = j_starts[t_idx].item(), j_stops[t_idx].item()
+            ajt = int(ajt_cpu[t_idx])
+            i_start, i_stop = int(i_starts_cpu[t_idx]), int(i_stops_cpu[t_idx])
+            j_start, j_stop = int(j_starts_cpu[t_idx]), int(j_stops_cpu[t_idx])
 
             # Optimized matrix-vector multiplication
             T_tr_slice = T_tr[ajt, j_start:j_stop, i_start:i_stop]
@@ -473,11 +478,12 @@ def updateC(C, T, n_clones, mess_fwd, mess_bwd, x, a, device, workspace=None):
         j_starts_upd = state_loc[j_indices_upd] 
         j_stops_upd = state_loc[j_indices_upd + 1]
 
-    # Ultra-optimized batched count matrix update for L4/A100 GPUs
-    # This addresses the 37% bottleneck by processing multiple timesteps efficiently
+    # Ultra-optimized batched count matrix update for A100 GPUs
+    # This addresses the major performance bottleneck with vectorized operations
     
     # Enable experimental batching for count updates (major performance boost)
     ENABLE_BATCHED_UPDATES = os.environ.get('CHMM_BATCHED_UPDATES', '1') == '1'
+    ENABLE_ULTRA_OPTIMIZED = os.environ.get('CHMM_ULTRA_OPTIMIZED', '1') == '1'
     
     if ENABLE_BATCHED_UPDATES and timesteps > 10:
         # Batch processing optimization for large sequences
@@ -496,9 +502,11 @@ def updateC(C, T, n_clones, mess_fwd, mess_bwd, x, a, device, workspace=None):
         batch_ws = workspace['batch_workspace']
         
         # Group timesteps by action for efficient batching
+        # CRITICAL FIX: Convert to CPU once instead of .item() in loop
+        a_indices_cpu = a_indices_upd.cpu().numpy()
         action_groups = {}
         for idx in range(timesteps - 1):
-            ajt = a_indices_upd[idx].item()
+            ajt = int(a_indices_cpu[idx])
             if ajt not in action_groups:
                 action_groups[ajt] = []
             action_groups[ajt].append(idx)
@@ -508,6 +516,7 @@ def updateC(C, T, n_clones, mess_fwd, mess_bwd, x, a, device, workspace=None):
             if len(batch_indices) == 1:
                 # Single timestep - use original method
                 idx = batch_indices[0]
+                # Convert indices to CPU once
                 tm1_start, tm1_stop = tm1_starts[idx].item(), tm1_stops[idx].item()
                 t_start, t_stop = t_starts[idx].item(), t_stops[idx].item()
                 i_start, i_stop = i_starts_upd[idx].item(), i_stops_upd[idx].item()
@@ -517,7 +526,8 @@ def updateC(C, T, n_clones, mess_fwd, mess_bwd, x, a, device, workspace=None):
                 beta = mess_bwd[t_start:t_stop]
                 T_slice = T[ajt, i_start:i_stop, j_start:j_stop]
 
-                q = torch.outer(alpha, beta) * T_slice
+                # CORRECTED: Use CPU algorithm - alpha.reshape(-1,1) * T * beta.reshape(1,-1)
+                q = alpha.reshape(-1, 1) * T_slice * beta.reshape(1, -1)
                 norm = q.sum()
                 if norm > 0:
                     q /= norm
@@ -532,11 +542,21 @@ def updateC(C, T, n_clones, mess_fwd, mess_bwd, x, a, device, workspace=None):
                 betas_list = []
                 boundaries_list = []
                 
+                # CRITICAL FIX: Pre-convert batch indices to avoid .item() in loop
+                batch_tm1_starts = tm1_starts[batch_indices].cpu().numpy()
+                batch_tm1_stops = tm1_stops[batch_indices].cpu().numpy()
+                batch_t_starts = t_starts[batch_indices].cpu().numpy()
+                batch_t_stops = t_stops[batch_indices].cpu().numpy()
+                batch_i_starts = i_starts_upd[batch_indices].cpu().numpy()
+                batch_i_stops = i_stops_upd[batch_indices].cpu().numpy()
+                batch_j_starts = j_starts_upd[batch_indices].cpu().numpy()
+                batch_j_stops = j_stops_upd[batch_indices].cpu().numpy()
+                
                 for i, idx in enumerate(batch_indices):
-                    tm1_start, tm1_stop = tm1_starts[idx].item(), tm1_stops[idx].item()
-                    t_start, t_stop = t_starts[idx].item(), t_stops[idx].item()
-                    i_start, i_stop = i_starts_upd[idx].item(), i_stops_upd[idx].item()
-                    j_start, j_stop = j_starts_upd[idx].item(), j_stops_upd[idx].item()
+                    tm1_start, tm1_stop = int(batch_tm1_starts[i]), int(batch_tm1_stops[i])
+                    t_start, t_stop = int(batch_t_starts[i]), int(batch_t_stops[i])
+                    i_start, i_stop = int(batch_i_starts[i]), int(batch_i_stops[i])
+                    j_start, j_stop = int(batch_j_starts[i]), int(batch_j_stops[i])
                     
                     alpha = mess_fwd[tm1_start:tm1_stop]
                     beta = mess_bwd[t_start:t_stop]
@@ -557,17 +577,17 @@ def updateC(C, T, n_clones, mess_fwd, mess_bwd, x, a, device, workspace=None):
                 for (i_size, j_size), group_items in boundary_groups.items():
                     if len(group_items) > 1:
                         # True batch processing for same-sized regions
-                        batch_alphas = torch.stack([alphas_list[item[0]] for item, _ in group_items])
-                        batch_betas = torch.stack([betas_list[item[0]] for item, _ in group_items])
+                        batch_alphas = torch.stack([alphas_list[item] for item, _ in group_items])
+                        batch_betas = torch.stack([betas_list[item] for item, _ in group_items])
                         
                         # Get T_slice (same for all since same action)
                         _, bounds = group_items[0]
                         i_start, i_stop, j_start, j_stop = bounds
                         T_slice = T[ajt, i_start:i_stop, j_start:j_stop]
                         
-                        # Batched outer product computation
+                        # CORRECTED: Use CPU algorithm - alpha.reshape(-1,1) * T * beta.reshape(1,-1)
                         # Shape: [batch_size, i_size, j_size]
-                        batch_q = torch.einsum('bi,bj->bij', batch_alphas, batch_betas) * T_slice.unsqueeze(0)
+                        batch_q = batch_alphas.unsqueeze(-1) * T_slice.unsqueeze(0) * batch_betas.unsqueeze(-2)
                         
                         # Vectorized normalization
                         batch_norms = batch_q.sum(dim=(1, 2))
@@ -591,26 +611,39 @@ def updateC(C, T, n_clones, mess_fwd, mess_bwd, x, a, device, workspace=None):
                         beta = betas_list[item_idx]
                         T_slice = T[ajt, i_start:i_stop, j_start:j_stop]
                         
-                        q = torch.outer(alpha, beta) * T_slice
+                        # CORRECTED: Use CPU algorithm - alpha.reshape(-1,1) * T * beta.reshape(1,-1)
+                        q = alpha.reshape(-1, 1) * T_slice * beta.reshape(1, -1)
                         norm = q.sum()
                         if norm > 0:
                             q /= norm
                             C[ajt, i_start:i_stop, j_start:j_stop] += q
     else:
         # Fallback to optimized sequential processing for small sequences
+        # CRITICAL FIX: Convert to CPU once instead of .item() in loop
+        a_indices_cpu = a_indices_upd.cpu().numpy()
+        tm1_starts_cpu = tm1_starts.cpu().numpy()
+        tm1_stops_cpu = tm1_stops.cpu().numpy()
+        t_starts_cpu = t_starts.cpu().numpy()
+        t_stops_cpu = t_stops.cpu().numpy()
+        i_starts_cpu = i_starts_upd.cpu().numpy()
+        i_stops_cpu = i_stops_upd.cpu().numpy()
+        j_starts_cpu = j_starts_upd.cpu().numpy()
+        j_stops_cpu = j_stops_upd.cpu().numpy()
+        
         for idx, t in enumerate(range(1, timesteps)):
-            ajt = a_indices_upd[idx].item()
+            ajt = int(a_indices_cpu[idx])
             
-            tm1_start, tm1_stop = tm1_starts[idx].item(), tm1_stops[idx].item()
-            t_start, t_stop = t_starts[idx].item(), t_stops[idx].item()
-            i_start, i_stop = i_starts_upd[idx].item(), i_stops_upd[idx].item()
-            j_start, j_stop = j_starts_upd[idx].item(), j_stops_upd[idx].item()
+            tm1_start, tm1_stop = int(tm1_starts_cpu[idx]), int(tm1_stops_cpu[idx])
+            t_start, t_stop = int(t_starts_cpu[idx]), int(t_stops_cpu[idx])
+            i_start, i_stop = int(i_starts_cpu[idx]), int(i_stops_cpu[idx])
+            j_start, j_stop = int(j_starts_cpu[idx]), int(j_stops_cpu[idx])
 
             alpha = mess_fwd[tm1_start:tm1_stop]
             beta = mess_bwd[t_start:t_stop]
             T_slice = T[ajt, i_start:i_stop, j_start:j_stop]
 
-            q = torch.outer(alpha, beta) * T_slice
+            # CORRECTED: Use CPU algorithm - alpha.reshape(-1,1) * T * beta.reshape(1,-1)
+            q = alpha.reshape(-1, 1) * T_slice * beta.reshape(1, -1)
             norm = q.sum()
             if norm > 0:
                 q /= norm
@@ -650,8 +683,12 @@ def backward(T, n_clones, x, a, device, workspace=None):
 
     # initialize final message
     t = T_len - 1
-    i = x[t]
-    message = torch.ones(n_clones[i], dtype = dtype, device = device) / n_clones[i]
+    i = x[t].item()
+    if DEBUG_MODE:
+        print(f"[DEBUG] backward (init): i={i}, type(i)={type(i)}")
+        print(f"[DEBUG] backward (init): n_clones={n_clones}, type(n_clones)={type(n_clones)}")
+        print(f"[DEBUG] backward (init): n_clones[i]={n_clones[i]}, type(n_clones[i])={type(n_clones[i])}")
+    message = torch.ones(n_clones[i].item(), dtype = dtype, device = device) / n_clones[i]
 
     mess_bwd = torch.empty(mess_loc[-1], dtype=dtype, device=device)
     t_start, t_stop = mess_loc[t : t + 2]
@@ -680,12 +717,19 @@ def backward(T, n_clones, x, a, device, workspace=None):
         max_msg_size = n_clones.max().item()
         workspace['backward_temp'] = torch.empty(max_msg_size, dtype=dtype, device=device)
     
+    # CRITICAL FIX: Convert to CPU once instead of .item() in loop
+    a_indices_bwd_cpu = a_indices_bwd.cpu().numpy()
+    i_starts_bwd_cpu = i_starts_bwd.cpu().numpy()
+    i_stops_bwd_cpu = i_stops_bwd.cpu().numpy()
+    j_starts_bwd_cpu = j_starts_bwd.cpu().numpy()
+    j_stops_bwd_cpu = j_stops_bwd.cpu().numpy()
+    
     # Backward recursion with optimized tensor operations
     for idx, t in enumerate(range(seq_len - 2, -1, -1)):
         # Vectorized index access
-        ajt = a_indices_bwd[idx].item()
-        i_start, i_stop = i_starts_bwd[idx].item(), i_stops_bwd[idx].item()
-        j_start, j_stop = j_starts_bwd[idx].item(), j_stops_bwd[idx].item()
+        ajt = int(a_indices_bwd_cpu[idx])
+        i_start, i_stop = int(i_starts_bwd_cpu[idx]), int(i_stops_bwd_cpu[idx])
+        j_start, j_stop = int(j_starts_bwd_cpu[idx]), int(j_stops_bwd_cpu[idx])
 
         # Optimized matrix operations
         T_slice = T[ajt, i_start:i_stop, j_start:j_stop]
@@ -731,8 +775,8 @@ def backtrace(T, n_clones, x, a, mess_fwd, device):
     belief = mess_fwd[t_start : t_stop]
     clone_idx[t] = torch.argmax(belief)
     for t in range(x.shape[0] - 2, -1, -1):
-        aij = a[t]
-        i, j = x[t], x[t + 1]
+        aij = a[t].item()
+        i, j = x[t].item(), x[t + 1].item()
 
         i_start, i_stop = state_loc[i : i + 2]
         j_start = state_loc[j]
@@ -796,8 +840,8 @@ def backtraceE(T, E, n_clones, x, a, mess_fwd, device):
 
     # Backtrace
     for t in range(T_len - 2, -1, -1):
-        aij = a[t]
-        next_state = states[t + 1]
+        aij = a[t].item()
+        next_state = states[t + 1].item()
         belief = mess_fwd[t] * T[aij, :, next_state]  # elementwise transition probability
         states[t] = torch.argmax(belief)
 
@@ -978,7 +1022,8 @@ def train_chmm(n_clones, x, a, device=None, method='em_T', n_iter=50, pseudocoun
         x=x, 
         a=a,
         pseudocount=pseudocount,
-        seed=seed
+        seed=seed,
+        device=device
     )
     print(f"Model initialized on device: {model.device}")
     print(f"Model T matrix device: {model.T.device if hasattr(model, 'T') else 'Not initialized'}")
@@ -1193,64 +1238,70 @@ def compute_forward_messages(chmm_state, x, a, device, pseudocount_E=1e-10):
     
     return mess_fwd
 
-def place_field(mess_fwd, rc, clone, device=None):
+def compute_place_field(mess_fwd, rc, clone, device=None):
     """
-    Compute place field for a given clone using GPU-optimized operations.
+    Compute place field for a given clone using GPU-optimized PyTorch operations.
+    
+    This function calculates the average probability of a clone's activation 
+    at each unique (row, column) position.
     
     Args:
-        mess_fwd (Tensor): [T, n_states] Forward messages
-        rc (Tensor): [T, 2] Row-column positions
-        clone (int): Clone index
-        device (torch.device, optional): GPU or CPU device
+        mess_fwd (Tensor): [T, n_states] Forward messages from CHMM
+        rc (Tensor): [T, 2] Row-column positions for each time step
+        clone (int): The specific clone index to compute the place field for
+        device (torch.device, optional): GPU or CPU device. Auto-detected if None.
         
     Returns:
-        Tensor: [max_r+1, max_c+1] Place field matrix
+        Tensor: [max_r+1, max_c+1] Matrix representing the clone's place field
     """
     if device is None:
         device = mess_fwd.device
     
-    # Move to device efficiently
+    # Move tensors to the target device if they aren't already there
     if mess_fwd.device != device:
         mess_fwd = mess_fwd.to(device)
     if rc.device != device:
         rc = rc.to(device)
     
-    # Validate inputs
+    # --- Input Validation ---
     assert mess_fwd.ndim == 2, f"mess_fwd must be 2D, got {mess_fwd.ndim}D"
-    assert rc.ndim == 2 and rc.shape[1] == 2, f"rc must be [T, 2], got {rc.shape}"
-    assert mess_fwd.shape[0] == rc.shape[0], f"sequence length mismatch: {mess_fwd.shape[0]} != {rc.shape[0]}"
-    assert isinstance(clone, int), f"clone must be int, got {type(clone)}"
-    assert 0 <= clone < mess_fwd.shape[1], f"clone {clone} out of range [0, {mess_fwd.shape[1]})"
+    assert rc.ndim == 2 and rc.shape[1] == 2, f"rc must be a [T, 2] tensor, got shape {rc.shape}"
+    assert mess_fwd.shape[0] == rc.shape[0], \
+        f"Sequence length mismatch: mess_fwd has {mess_fwd.shape[0]} steps, rc has {rc.shape[0]} steps"
+    assert isinstance(clone, int), f"clone must be an integer, got {type(clone)}"
+    assert 0 <= clone < mess_fwd.shape[1], f"clone index {clone} is out of bounds for {mess_fwd.shape[1]} clones"
     
-    # Get field dimensions
+    # --- Field Computation ---
+    # Determine the dimensions of the place field from the max row and column values
     max_r, max_c = rc.max(dim=0)[0]
     field_shape = (max_r.item() + 1, max_c.item() + 1)
     
-    # Initialize field and count matrices
+    # Find unique (row, column) pairs and get their inverse indices
+    unique_rc, inverse_indices = torch.unique(rc, dim=0, return_inverse=True)
+    
+    # Extract the probabilities for the specified clone
+    clone_probs = mess_fwd[:, clone]
+    
+    # Sum the probabilities for each unique location using scatter_add_ for efficiency
+    # Using bincount is a highly optimized way to count occurrences
+    visit_counts = torch.bincount(inverse_indices, minlength=unique_rc.shape[0])
+    
+    # Sum probabilities for each unique location
+    summed_probs = torch.zeros(unique_rc.shape[0], device=device, dtype=mess_fwd.dtype)
+    summed_probs.scatter_add_(0, inverse_indices, clone_probs)
+    
+    # Initialize the final field and count matrices
     field = torch.zeros(field_shape, device=device, dtype=mess_fwd.dtype)
     count = torch.zeros(field_shape, device=device, dtype=torch.int64)
     
-    # GPU-optimized accumulation using scatter_add for better performance
-    flat_indices = rc[:, 0] * field_shape[1] + rc[:, 1]  # Convert 2D indices to 1D
+    # Place the summed probabilities and visit counts into the field matrices
+    field[unique_rc[:, 0], unique_rc[:, 1]] = summed_probs
+    count[unique_rc[:, 0], unique_rc[:, 1]] = visit_counts
     
-    # Flatten field matrices for scatter operations
-    field_flat = field.flatten()
-    count_flat = count.flatten()
-    
-    # Accumulate using scatter_add (GPU optimized)
-    field_flat.scatter_add_(0, flat_indices, mess_fwd[:, clone])
-    count_flat.scatter_add_(0, flat_indices, torch.ones_like(flat_indices, dtype=torch.int64))
-    
-    # Reshape back to 2D
-    field = field_flat.view(field_shape)
-    count = count_flat.view(field_shape)
-    
-    # Avoid division by zero
+    # Avoid division by zero by ensuring counts are at least 1
     count = count.clamp(min=1)
     
-    # Normalize by visit counts
-    field = field / count.float()
+    # Normalize the field by the visit counts to get the average probability
+    field = field / count.to(field.dtype)
     
     return field
-
-# Duplicate function removed - using optimized version at line 903

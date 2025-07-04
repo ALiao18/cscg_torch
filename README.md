@@ -7,7 +7,7 @@
 
 A high-performance PyTorch implementation of Compositional State-Action Graph (CSCG) models with GPU-accelerated sequence generation and V100/A100 optimizations. Perfect for reinforcement learning research, navigation tasks, and sequential modeling.
 
-## ✨ Key Features
+## Key Features
 
 **GPU-Accelerated**: Full CUDA/MPS support with V100/A100 optimizations  
 **Fast Sequence Generation**: Vectorized GPU operations with smart chunking  
@@ -71,7 +71,7 @@ import cscg_torch
 print(f"CSCG Torch version: {cscg_torch.__version__}")
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Google Colab (Recommended)
 

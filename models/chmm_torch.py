@@ -8,22 +8,17 @@ import warnings
 from typing import Optional, Tuple, List, Union
 
 # GPU-optimized imports
-try:
-    import torch.cuda
-    CUDA_AVAILABLE = torch.cuda.is_available()
-except ImportError:
-    CUDA_AVAILABLE = False
 
 from .train_utils import (validate_seq, forward, forwardE, forward_mp, 
                           forwardE_mp,backward, updateC, backtrace, 
                           backtraceE, backwardE, updateCE, forward_mp_all, 
-                          backtrace_all)
+                          backtrace_all, compute_place_field)
 
 class CHMM_torch(object):
     def __init__(self, n_clones: torch.Tensor, x: torch.Tensor, a: torch.Tensor, 
                  pseudocount: float = 0.0, dtype: torch.dtype = torch.float32, 
                  seed: int = 42, enable_mixed_precision: bool = False, 
-                 memory_efficient: bool = True):
+                 memory_efficient: bool = True, device: torch.device = None):
         """
         Construct a GPU-optimized CHMM object with enhanced memory management.
 
@@ -39,7 +34,7 @@ class CHMM_torch(object):
         """
         try:
             # GPU Memory Management: Set up device and memory optimization
-            self._setup_device_and_memory(memory_efficient)
+            self._setup_device_and_memory(memory_efficient, device)
             
             # Input validation with enhanced error handling
             self._validate_inputs(n_clones, x, a, pseudocount, seed, dtype)
@@ -55,30 +50,35 @@ class CHMM_torch(object):
             
             # Performance monitoring setup
             self._setup_performance_monitoring()
-            
+
+            # Compile model for performance
+            if self.device.type == 'cuda':
+                self.forward = torch.compile(self.forward)
+                self.backward = torch.compile(self.backward)
+
         except Exception as e:
             self._handle_initialization_error(e)
             
-    def _setup_device_and_memory(self, memory_efficient: bool) -> None:
+    def _setup_device_and_memory(self, memory_efficient: bool, device: torch.device) -> None:
         """
         Set up GPU device and memory management with error handling.
         """
         try:
-            # Device selection with MPS support and fallback
-            if CUDA_AVAILABLE and torch.cuda.is_available():
-                self.device = torch.device("cuda")
-                # GPU memory optimization
-                if memory_efficient:
-                    torch.cuda.empty_cache()  # Clear cache
-                    # Set memory fraction if needed
-                    if hasattr(torch.cuda, 'set_per_process_memory_fraction'):
-                        torch.cuda.set_per_process_memory_fraction(0.8)
-            elif torch.backends.mps.is_available():
-                self.device = torch.device("mps:0")  # Use explicit index for consistency
-                print("Using MPS (Apple Silicon) device")
+            if device:
+                self.device = device
             else:
-                self.device = torch.device("cpu")
-                warnings.warn("Neither CUDA nor MPS available, falling back to CPU", UserWarning)
+                # Device selection with MPS support and fallback
+                if torch.cuda.is_available():
+                    self.device = torch.device("cuda")
+                elif torch.backends.mps.is_available():
+                    self.device = torch.device("mps:0")
+                else:
+                    self.device = torch.device("cpu")
+            
+            if self.device.type == 'cuda' and memory_efficient:
+                torch.cuda.empty_cache()
+            
+            print(f"Using device: {self.device}")
                 
             self.memory_efficient = memory_efficient
             self.cuda_available = self.device.type == 'cuda'
@@ -140,31 +140,16 @@ class CHMM_torch(object):
             elif self.mps_available:
                 torch.mps.manual_seed(seed)
             
-            # Efficient tensor movement to device with V100 optimization
+            # Efficient tensor movement to device
             with torch.no_grad():
-                if self.cuda_available:
-                    # V100-optimized tensor transfers with pinned memory
-                    tensors_to_transfer = {'n_clones': n_clones, 'x': x, 'a': a}
-                    transferred = self._optimize_v100_tensor_transfers(tensors_to_transfer)
-                    self.n_clones = transferred['n_clones']
-                    self._x = transferred['x'] 
-                    self._a = transferred['a']
-                else:
-                    # MPS doesn't support non_blocking transfers
-                    self.n_clones = n_clones.to(device=self.device)
-                    self._x = x.to(device=self.device)
-                    self._a = a.to(device=self.device)
+                self.n_clones = n_clones.to(device=self.device, non_blocking=self.cuda_available)
+                self._x = x.to(device=self.device, non_blocking=self.cuda_available)
+                self._a = a.to(device=self.device, non_blocking=self.cuda_available)
             
-            # Mixed precision setup with V100 Tensor Core optimization
+            # Mixed precision setup
             self.dtype = dtype
             self.enable_mixed_precision = enable_mixed_precision and self.cuda_available
-            
-            # V100-specific Tensor Core optimization
-            if self.cuda_available:
-                self.compute_dtype, self.use_tensor_cores = self._setup_v100_precision_optimization(dtype)
-            else:
-                self.compute_dtype = dtype
-                self.use_tensor_cores = False
+            self.compute_dtype = torch.float16 if self.enable_mixed_precision else dtype
                 
             # Validate sequence with GPU tensors
             validate_seq(self._x, self._a, self.n_clones)
@@ -172,106 +157,6 @@ class CHMM_torch(object):
         except Exception as e:
             raise RuntimeError(f"Tensor initialization failed: {e}")
     
-    def _optimize_v100_tensor_transfers(self, tensors_dict: dict) -> dict:
-        """
-        V100-optimized tensor transfers with pinned memory for maximum bandwidth utilization.
-        
-        Args:
-            tensors_dict: Dictionary of tensors to transfer to GPU
-            
-        Returns:
-            Dictionary of transferred tensors
-        """
-        if not self.cuda_available:
-            return {name: tensor.to(self.device) for name, tensor in tensors_dict.items()}
-        
-        try:
-            gpu_props = torch.cuda.get_device_properties(self.device)
-            is_v100 = "V100" in gpu_props.name
-            
-            transferred_tensors = {}
-            
-            # Use pinned memory for faster host-to-device transfers on V100
-            with torch.cuda.device(self.device):
-                for name, tensor in tensors_dict.items():
-                    if tensor.device.type == 'cpu':
-                        if is_v100 and tensor.numel() > 1000:
-                            # For V100, use pinned memory for large tensors
-                            if not tensor.is_pinned():
-                                pinned_tensor = tensor.pin_memory()
-                                transferred_tensors[name] = pinned_tensor.to(
-                                    device=self.device, non_blocking=True
-                                )
-                            else:
-                                transferred_tensors[name] = tensor.to(
-                                    device=self.device, non_blocking=True
-                                )
-                        else:
-                            # Standard transfer for smaller tensors
-                            transferred_tensors[name] = tensor.to(
-                                device=self.device, non_blocking=True
-                            )
-                    else:
-                        # Already on GPU, ensure correct device
-                        transferred_tensors[name] = tensor.to(self.device)
-                
-                # Synchronize once after all transfers for V100 efficiency
-                if is_v100:
-                    torch.cuda.synchronize(self.device)
-            
-            return transferred_tensors
-            
-        except Exception as e:
-            print(f"V100 optimization failed, using standard transfer: {e}")
-            return {name: tensor.to(self.device) for name, tensor in tensors_dict.items()}
-    
-    def _setup_v100_precision_optimization(self, dtype: torch.dtype) -> tuple[torch.dtype, bool]:
-        """
-        Setup V100 Tensor Core optimization with automatic precision selection.
-        
-        Args:
-            dtype: Requested data type
-            
-        Returns:
-            Tuple of (optimized_dtype, use_tensor_cores)
-        """
-        try:
-            gpu_props = torch.cuda.get_device_properties(self.device)
-            gpu_name = gpu_props.name
-            
-            # V100 has first-generation Tensor Cores optimized for FP16
-            if "V100" in gpu_name:
-                if dtype == torch.float32 and self.enable_mixed_precision:
-                    print("V100 detected: Enabling FP16 Tensor Core optimization")
-                    return torch.float16, True
-                elif dtype == torch.float64:
-                    print("V100 detected: Using FP32 for better Tensor Core compatibility")
-                    return torch.float32, True
-                else:
-                    return dtype, "V100" in gpu_name
-            
-            # A100/H100 have newer Tensor Cores with broader precision support
-            elif any(gpu in gpu_name for gpu in ["A100", "H100"]):
-                if self.enable_mixed_precision:
-                    print(f"{gpu_name} detected: Enabling advanced mixed precision")
-                    return torch.float16 if dtype == torch.float32 else dtype, True
-                else:
-                    return dtype, True
-            
-            # General CUDA GPU
-            else:
-                if self.enable_mixed_precision and dtype == torch.float32:
-                    return torch.float16, False
-                else:
-                    return dtype, False
-                    
-        except Exception as e:
-            print(f"Precision optimization failed: {e}")
-            if self.enable_mixed_precision and dtype == torch.float32:
-                return torch.float16, False
-            else:
-                return dtype, False
-            
     def _initialize_parameters(self) -> None:
         """
         Initialize model parameters with GPU optimization.
@@ -346,8 +231,11 @@ class CHMM_torch(object):
         Handle initialization errors with graceful degradation.
         """
         print(f"CHMM initialization failed: {error}")
+
+        if isinstance(error, ValueError):
+            raise error
+
         print("Attempting fallback initialization...")
-        
         try:
             # Fallback to CPU with basic initialization
             self.device = torch.device("cpu")
@@ -356,7 +244,7 @@ class CHMM_torch(object):
             self.cuda_available = False
             warnings.warn("Fell back to basic CPU initialization", UserWarning)
         except Exception as fallback_error:
-            raise RuntimeError(f"Both primary and fallback initialization failed: {fallback_error}")
+            raise RuntimeError(f"Primary initialization failed with '{error}', and fallback also failed with '{fallback_error}'")
         
     def update_T(self, verbose: bool = True) -> None:
         """
@@ -644,7 +532,7 @@ class CHMM_torch(object):
             store_messages = True
         )
         states = backtrace(self.T, self.n_clones, x, a, mess_fwd, self.device)
-        return -log2_lik, states
+        return -log2_lik.sum(), states
     
     def decodeE(self, E, x, a):
         """
@@ -727,6 +615,7 @@ class CHMM_torch(object):
                         store_messages=True,
                         workspace=self._workspace
                     )
+                    current_bps = -log2_lik.mean().item()
                     
                     # Backward pass
                     mess_bwd = backward(self.T, self.n_clones, x_gpu, a_gpu, self.device, workspace=self._workspace)
@@ -1051,3 +940,59 @@ class CHMM_torch(object):
         )
         return s_a
 
+    def top_k_used_clones(self, x, a, k: int):
+        """
+        Get top k most frequently used clones for a given sequence.
+        
+        Args:
+            x (torch.Tensor): Observation sequence
+            a (torch.Tensor): Action sequence
+            k (int): Number of top clones to return
+            
+        Returns:
+            list: List of (clone_id, count) tuples sorted by frequency
+        """
+        assert isinstance(k, int), f"k must be int, got {type(k)}"
+        assert k > 0, f"k must be positive, got {k}"
+        
+        _, states = self.decode(x, a)
+        
+        # Use torch.unique for GPU-native counting
+        unique, counts = torch.unique(states, return_counts=True)
+        
+        # Sort by counts in descending order
+        sorted_indices = torch.argsort(counts, descending=True)
+        top_k_indices = sorted_indices[:k]
+        
+        top_clones = unique[top_k_indices]
+        top_counts = counts[top_k_indices]
+        
+        return list(zip(top_clones.cpu().numpy(), top_counts.cpu().numpy()))
+
+    def count_used_clones(self, x, a):
+        """
+        Count number of unique clones used per observation type for a given sequence.
+        
+        Args:
+            x (torch.Tensor): Observation sequence
+            a (torch.Tensor): Action sequence
+            
+        Returns:
+            dict: Mapping from observation_id to number of unique clones used
+        """
+        _, states = self.decode(x, a)
+        used_clones = torch.unique(states)
+        
+        # Precompute clone ranges for each observation type
+        clone_ranges = torch.cat([torch.tensor([0], device=self.device), self.n_clones.cumsum(0)])
+        counts = {}
+
+        for obs_id in range(len(self.n_clones)):
+            start = clone_ranges[obs_id]
+            end = clone_ranges[obs_id + 1]
+            
+            # Efficiently count clones within the range for the current observation
+            clones_in_use = used_clones[(used_clones >= start) & (used_clones < end)]
+            counts[obs_id] = len(clones_in_use)
+
+        return counts

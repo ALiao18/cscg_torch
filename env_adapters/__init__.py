@@ -3,9 +3,9 @@ from .base_adapter import CSCGEnvironmentAdapter, plot_graph
 
 # Import room adapters with error handling
 try:
-    from .room_adapter import RoomNPAdapter, RoomTorchAdapter, save_room_plot
+    from .room_adapter import RoomAdapter
     # Backward compatibility
-    RoomAdapter = RoomTorchAdapter
+    RoomAdapter = RoomAdapter
     _ROOM_ADAPTERS_AVAILABLE = True
 except ImportError as e:
     print(f"Warning: Could not import room adapters: {e}")
@@ -18,9 +18,7 @@ except ImportError as e:
 # Import utilities with error handling
 try:
     from .room_utils import (
-        create_room_adapter, get_room_n_clones, demo_room_setup,
-        get_obs_colormap, clone_to_obs_map, top_k_used_clones, 
-        count_used_clones
+        create_room_adapter, get_room_n_clones
     )
     _ROOM_UTILS_AVAILABLE = True
 except ImportError as e:

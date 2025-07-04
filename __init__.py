@@ -44,13 +44,14 @@ __email__ = "yl8520@nyu.edu"
 
 # Core imports for easy access
 from .models.chmm_torch import CHMM_torch
+from .agent_adapters.agent_2d import Agent2D
 from .models.train_utils import (
-    train_chmm, make_E, make_E_sparse, compute_forward_messages, place_field
+    train_chmm, make_E, make_E_sparse, compute_forward_messages, compute_place_field
 )
 from .env_adapters.room_utils import (
-    create_room_adapter, get_room_n_clones, generate_room_sequence
+    create_room_adapter, get_room_n_clones
 )
-from .env_adapters.room_adapter import RoomTorchAdapter, RoomNPAdapter
+from .env_adapters.room_adapter import RoomAdapter
 from .env_adapters.base_adapter import CSCGEnvironmentAdapter, plot_graph
 
 # Utility imports
@@ -75,7 +76,7 @@ __all__ = [
     'make_E',
     'make_E_sparse', 
     'compute_forward_messages',
-    'place_field',
+    'compute_place_field',
     
     # Environment adapters
     'create_room_adapter',

@@ -92,6 +92,41 @@ class CSCGEnvironmentAdapter:
         assert len(result_x) <= length, f"Generated sequence too long: {len(result_x)} > {length}"
         
         return result_x, result_a
+
+
+def clone_to_obs_map(n_clones):
+    """
+    Create mapping from clone indices to observation indices.
+    
+    Args:
+        n_clones (array-like): Number of clones per observation
+        
+    Returns:
+        dict: Mapping from clone index to observation index
+    """
+    # Convert to numpy if needed for consistent handling
+    if isinstance(n_clones, torch.Tensor):
+        n_clones = n_clones.cpu().numpy()
+    
+    assert isinstance(n_clones, (np.ndarray, list, tuple)), f"n_clones must be array-like, got {type(n_clones)}"
+    n_clones = np.asarray(n_clones)
+    assert n_clones.ndim == 1, f"n_clones must be 1D, got {n_clones.ndim}D"
+    assert len(n_clones) > 0, "n_clones cannot be empty"
+    assert np.all(n_clones > 0), "all n_clones values must be positive"
+    
+    mapping = {}
+    idx = 0
+    for obs_id, n in enumerate(n_clones):
+        for _ in range(int(n)):
+            mapping[idx] = obs_id
+            idx += 1
+    
+    # Validate mapping
+    assert len(mapping) == np.sum(n_clones), f"mapping length mismatch: {len(mapping)} != {np.sum(n_clones)}"
+    assert all(isinstance(k, int) and isinstance(v, int) for k, v in mapping.items()), "mapping must have int keys and values"
+    
+    return mapping
+
     
 # Note: These functions are now defined in room_utils.py to avoid duplication
 # Import them from room_utils when needed
@@ -134,7 +169,8 @@ def plot_graph(
     assert k > 0, f"k must be positive, got {k}"
     
     # Import helper functions
-    from .room_utils import clone_to_obs_map, top_k_used_clones, count_used_clones
+    # NOTE: top_k_used_clones and count_used_clones will be moved to chmm_torch module
+    # from .room_utils import top_k_used_clones, count_used_clones
     
     # Create trial folder
     trial_dir = os.path.join(PLOT_DIR, trial_name)
@@ -230,52 +266,55 @@ def plot_graph(
         )
 
     elif plot_mode == 'place_fields':
-        assert x is not None and a is not None, "x and a required for place fields plot"
-        assert mess_fwd is not None, "mess_fwd required for place fields plot"
-        assert rc is not None, "rc required for place fields plot"
-        
-        # Convert to numpy if needed
-        if isinstance(mess_fwd, torch.Tensor):
-            mess_fwd = mess_fwd.cpu().numpy()
-        if isinstance(rc, torch.Tensor):
-            rc = rc.cpu().numpy()
-            
-        # Decode states
-        if isinstance(x, np.ndarray):
-            x = torch.from_numpy(x)
-        if isinstance(a, np.ndarray):
-            a = torch.from_numpy(a)
-        _, states = chmm.decode(x, a)
-        if isinstance(states, torch.Tensor):
-            states = states.cpu().numpy()
-            
-        top_clones = top_k_used_clones(states, k)
-        n_plots = min(k, 5, len(top_clones))
-        
-        fig, axs = plt.subplots(1, n_plots, figsize=(3*n_plots, 4))
-        if n_plots == 1:
-            axs = [axs]
-            
-        for i, (clone, _) in enumerate(top_clones[:n_plots]):
-            ax = axs[i]
-            pf = np.zeros(rc.max(0) + 1)
-            count = np.zeros(rc.max(0) + 1, int)
-            for t in range(mess_fwd.shape[0]):
-                r, c = rc[t]
-                pf[r, c] += mess_fwd[t, clone]
-                count[r, c] += 1
-            count[count == 0] = 1
-            pf /= count
-            im = ax.imshow(pf, cmap='viridis')
-            ax.set_title(f"Clone {clone}")
-            ax.axis('off')
-            plt.colorbar(im, ax=ax)
-            
-        fig.suptitle("Place Fields of Top Used Clones", fontsize=16, fontweight='bold')
-        plt.tight_layout()
-        for path in paths:
-            fig.savefig(path, bbox_inches='tight', dpi=300)
-        plt.close()
+        # NOTE: This plot mode is temporarily disabled until top_k_used_clones is moved to chmm_torch
+        print("Warning: place_fields plot mode is temporarily disabled")
+        return
+        # assert x is not None and a is not None, "x and a required for place fields plot"
+        # assert mess_fwd is not None, "mess_fwd required for place fields plot"
+        # assert rc is not None, "rc required for place fields plot"
+        # 
+        # # Convert to numpy if needed
+        # if isinstance(mess_fwd, torch.Tensor):
+        #     mess_fwd = mess_fwd.cpu().numpy()
+        # if isinstance(rc, torch.Tensor):
+        #     rc = rc.cpu().numpy()
+        #     
+        # # Decode states
+        # if isinstance(x, np.ndarray):
+        #     x = torch.from_numpy(x)
+        # if isinstance(a, np.ndarray):
+        #     a = torch.from_numpy(a)
+        # _, states = chmm.decode(x, a)
+        # if isinstance(states, torch.Tensor):
+        #     states = states.cpu().numpy()
+        #     
+        # top_clones = top_k_used_clones(states, k)
+        # n_plots = min(k, 5, len(top_clones))
+        # 
+        # fig, axs = plt.subplots(1, n_plots, figsize=(3*n_plots, 4))
+        # if n_plots == 1:
+        #     axs = [axs]
+        #     
+        # for i, (clone, _) in enumerate(top_clones[:n_plots]):
+        #     ax = axs[i]
+        #     pf = np.zeros(rc.max(0) + 1)
+        #     count = np.zeros(rc.max(0) + 1, int)
+        #     for t in range(mess_fwd.shape[0]):
+        #         r, c = rc[t]
+        #         pf[r, c] += mess_fwd[t, clone]
+        #         count[r, c] += 1
+        #     count[count == 0] = 1
+        #     pf /= count
+        #     im = ax.imshow(pf, cmap='viridis')
+        #     ax.set_title(f"Clone {clone}")
+        #     ax.axis('off')
+        #     plt.colorbar(im, ax=ax)
+        #     
+        # fig.suptitle("Place Fields of Top Used Clones", fontsize=16, fontweight='bold')
+        # plt.tight_layout()
+        # for path in paths:
+        #     fig.savefig(path, bbox_inches='tight', dpi=300)
+        # plt.close()
 
     elif plot_mode == 'progression':
         assert progression is not None, "progression required for progression plot"
@@ -305,35 +344,38 @@ def plot_graph(
         plt.close()
 
     elif plot_mode == 'usage':
-        assert x is not None and a is not None, "x and a required for usage plot"
-        
-        usage = count_used_clones(chmm, x, a)
-        
-        fig, ax = plt.subplots(figsize=(10, 6))
-        bars = ax.bar(list(usage.keys()), list(usage.values()), 
-                     color='steelblue', alpha=0.7, edgecolor='black', linewidth=0.5)
-        ax.set_title("Clone Usage Per Observation Type", fontsize=14, fontweight='bold')
-        ax.set_xlabel("Observation ID", fontsize=12)
-        ax.set_ylabel("Number of Clones Used", fontsize=12)
-        ax.grid(True, alpha=0.3, axis='y')
-        
-        # Add value labels on bars
-        for bar in bars:
-            height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2., height + 0.05,
-                   f'{int(height)}', ha='center', va='bottom', fontweight='bold')
-        
-        # Add total usage info
-        total_usage = sum(usage.values())
-        ax.text(0.98, 0.98, f'Total Clones Used: {total_usage}', 
-               transform=ax.transAxes, fontsize=10,
-               verticalalignment='top', horizontalalignment='right',
-               bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
-        
-        plt.tight_layout()
-        for path in paths:
-            fig.savefig(path, bbox_inches='tight', dpi=300)
-        plt.close()
+        # NOTE: This plot mode is temporarily disabled until count_used_clones is moved to chmm_torch
+        print("Warning: usage plot mode is temporarily disabled")
+        return
+        # assert x is not None and a is not None, "x and a required for usage plot"
+        # 
+        # usage = count_used_clones(chmm, x, a)
+        # 
+        # fig, ax = plt.subplots(figsize=(10, 6))
+        # bars = ax.bar(list(usage.keys()), list(usage.values()), 
+        #              color='steelblue', alpha=0.7, edgecolor='black', linewidth=0.5)
+        # ax.set_title("Clone Usage Per Observation Type", fontsize=14, fontweight='bold')
+        # ax.set_xlabel("Observation ID", fontsize=12)
+        # ax.set_ylabel("Number of Clones Used", fontsize=12)
+        # ax.grid(True, alpha=0.3, axis='y')
+        # 
+        # # Add value labels on bars
+        # for bar in bars:
+        #     height = bar.get_height()
+        #     ax.text(bar.get_x() + bar.get_width()/2., height + 0.05,
+        #            f'{int(height)}', ha='center', va='bottom', fontweight='bold')
+        # 
+        # # Add total usage info
+        # total_usage = sum(usage.values())
+        # ax.text(0.98, 0.98, f'Total Clones Used: {total_usage}', 
+        #        transform=ax.transAxes, fontsize=10,
+        #        verticalalignment='top', horizontalalignment='right',
+        #        bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
+        # 
+        # plt.tight_layout()
+        # for path in paths:
+        #     fig.savefig(path, bbox_inches='tight', dpi=300)
+        # plt.close()
 
     elif plot_mode == 'performance':
         assert x is not None and a is not None, "x and a required for performance plot"
