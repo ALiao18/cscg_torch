@@ -90,8 +90,7 @@ setup(
         'Source': 'https://github.com/ALiao18/cscg_torch',
         'Documentation': 'https://github.com/ALiao18/cscg_torch#readme',
     },
-    packages=find_packages(where="cscg_torch"),
-    package_dir={"": "cscg_torch"},
+    packages=find_packages(),
     classifiers=[
         'Development Status :: 4 - Beta',
         'Intended Audience :: Science/Research',

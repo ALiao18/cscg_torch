@@ -64,10 +64,9 @@ Documentation = "https://github.com/ALiao18/cscg_torch#readme"
 
 [tool.setuptools]
 include-package-data = true
-package-dir = {"" = "cscg_torch"}
 
 [tool.setuptools.packages.find]
-where = ["cscg_torch"]
+where = ["."]
 
 [tool.black]
 line-length = 88
